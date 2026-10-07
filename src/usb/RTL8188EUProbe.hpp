@@ -3,6 +3,7 @@
 // enumerate endpoints, chip ID and efuse (MAC) read. No firmware, no Wi-Fi.
 #pragma once
 
+#include "rtl8188eu_txdesc.h"
 struct Reg32Val;
 struct RfVal;   // generated tables header, see RTL8188EUProbe.cpp
 
@@ -103,6 +104,7 @@ private:
     void     asyncStop();       // stop RX, drain TX, free buffers
     IOReturn rxStart();
     void     rxStop();
+    IOReturn txSubmitFrame(const uint8_t *frame, uint16_t len, const rtl8188eu_tx::Params &p, void *cookie);
     IOReturn txSubmitMgmt(const uint8_t *frame, uint16_t len, uint16_t seq, void *cookie);
     void     asyncSelfTest();
     IOReturn phyLcCalibrate();

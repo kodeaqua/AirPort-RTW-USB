@@ -33,3 +33,10 @@ Proposed WP4 shape: a small `RTW88CoreOps` hook (patch file in this repo, applie
 and routes probe/remove in `RTW88IEEE80211::start()/stop()`. With no table registered the original PCIe code runs unchanged.
 `make airport` passes with the patch applied. Not run on hardware (PCIe hardware not available here). Next: WP4 step 2, USB core ops
 implementation + `ieee80211_hw/ops` face over the probe core (src/usb/), then WP5 provider (frontend `create()` still takes PCI types).
+
+## Status 2026-10-07 (data-frame txdesc)
+`src/usb/rtl8188eu_txdesc.h` is a pure builder ported from rtl8xxxu `rtl8xxxu_tx` + `fill_txdesc_v3` (queue select, pipe map for 2/3 bulk OUT eps,
+QoS, SEC_AES/RC4, short preamble, RTS/CTS-self, pt_stage 5, fallback 0x1ff00, csum). `txSubmitFrame()` in the probe kext uses it; `txSubmitMgmt()` is a wrapper.
+Verified on host: mgmt descriptors are byte-identical to the previous inline code (hardware-proven); data cases checked by hand against the Linux source.
+Not ported: A-MPDU, HT40, SGI, TX report and rate adaptation (Linux data rate = ra_info.decision_rate, initial MCS7, adjusted from C2H reports).
+Hardware validation idea (not written yet): in async_selftest, send a data frame to a beacon-learned BSSID while unassociated; a deauth/disassoc reply to our MAC proves the data txdesc (class-3 frame response).

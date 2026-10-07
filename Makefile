@@ -63,3 +63,9 @@ unload:
 
 clean:
 	rm -rf build
+
+# Host-side unit test of the pure txdesc builder (no kernel, no hardware).
+.PHONY: test-txdesc
+test-txdesc:
+	@mkdir -p build
+	clang++ -std=c++17 -Wall -Isrc/usb tools/test_txdesc.cpp -o build/test_txdesc && build/test_txdesc
