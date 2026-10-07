@@ -66,7 +66,8 @@ abstraction) for connect setup, scan, stats.
 - `make airport` → `build/out/AirPortRTW.kext`; objects = rtw88 core + chips (8822b/8822c/8821c) +
   compat + firmware blobs + `AIRPORT_KEXT_SRCS`. Flags `-DCONFIG_RTW88_PCI=1`, MINOS 13.0, x86_64.
 - Firmware is embedded (`gen_fw_blobs.py` → `fw_blobs.c`); bootstrap downloads from X1REN41L's repo.
-- Baseline `make airport` has **not** been run in this session (needs bootstrap downloads).
+- Baseline `make airport` ran on macOS 26.7.1 (Tahoe, Xcode CLT) after `bootstrap-deps.sh`: **builds OK**
+  → `build/out/AirPortRTW.kext` (warnings only: `-Wshadow` on the `current` macro, int conversions).
 
 ## 6. Seam recommendation
 
@@ -78,10 +79,15 @@ Required refactors before a second core can attach:
 3. Replace the single-global `g_rtw88_hw` with per-instance state (at minimum, guard against dual load).
 4. New AirPortRTW-USB provider class (IO80211Controller on `IOUSBHostDevice`), not `IOEthernetController`.
    `AirPortRTW` is currently `IOPCIDevice`-specific (AirPortRTW.hpp:21 includes IOPCIDevice).
-   Not yet read: how much of AirPortRTW.cpp (3501 lines) touches `_pciDevice` directly — **read before Stage 2**.
+   AirPortRTW.cpp PCI dependence (grep, 37 hits) is localized, not spread through the 3501 lines:
+   `start()` ~L116-182 (IOPCIDevice cast, bus master/memory enable, BAR2 `mapDeviceMemoryWithRegister`,
+   fake `pci_dev` vendor/device from config space), interrupt source ~L364-390, `pci*` config accessors
+   L393-398, power/sleep-wake L640-880, one more at L3122. The rest (IO80211 ioctls) is transport-agnostic.
+   So a USB provider means a new `start()/stop()/power` path + replacing interrupts with USB RX
+   completions; the ioctl layer can be shared.
 
 ## 7. Still unknown (needs user)
 
-- Dongle VID:PID (`system_profiler SPUSBDataType`)
-- macOS version of the Hackintosh
+- ~~Dongle VID:PID~~ → `0bda:8179` Realtek "802.11n NIC", serial `00E04C0001`, USB 2.0 (from `ioreg -p IOUSB`; `system_profiler` returned empty output here)
+- ~~macOS version~~ → macOS 26.7.1 (Tahoe); needs restored legacy IO80211 stack (see CLAUDE.md)
 - 8188EU silicon cut (rtl8xxxu does not support cut I — see decisions.md)
