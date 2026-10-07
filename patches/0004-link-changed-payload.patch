@@ -1,0 +1,21 @@
+--- a/src/kext/AirPortRTW.cpp
++++ b/src/kext/AirPortRTW.cpp
+@@ -3575,7 +3575,17 @@
+         break;
+     case kRTW88EventDisconnected:
+         setProperty("STA_DISCONNECTED_EVENT", kOSBooleanTrue);
+-        _netif->postMessage(APPLE80211_M_LINK_CHANGED);
++        {
++            /* Tahoe CoreWiFi drops LINK_CHANGED unless the payload is 32 bytes ("Unexpected event payload length for
++             * APPLE80211_M_LINK_CHANGED (expected=32, actual=0)" in airportd); the SDK struct is only 24 bytes.
++             * GUESS: first 24 bytes follow apple80211_link_changed_event_data, the last 8 are zero. */
++            uint8_t payload[32] = {};
++            apple80211_link_changed_event_data *d = (apple80211_link_changed_event_data *)payload;
++            d->isLinkDown = true;
++            d->voluntary  = false;
++            d->reason     = _ieee80211 ? _ieee80211->deauthReason() : 0;
++            _netif->postMessage(APPLE80211_M_LINK_CHANGED, payload, sizeof(payload));
++        }
+         break;
+     case kRTW88EventRSSIChanged:   _netif->postMessage(APPLE80211_M_LINK_QUALITY); break;
+     default: break;
