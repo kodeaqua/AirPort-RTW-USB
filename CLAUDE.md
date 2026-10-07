@@ -58,7 +58,7 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   **PASS on hardware (2026-10-07, one combined run):** v0.10.1 stale-FIFO drain (ch1-8 clean, AP heard on ch9-13 = normal +-2 ch leakage of a ch11 AP), v0.11.0 active scan + TX (tx_ok=1 tx_fail=0 per channel),
   v0.12.x link regs/CCMP CAM/H2C (HMTFR=0, SECCFG=0xcf), v0.13.0 async engine (rx 42/42, tx 5/5, errors=0, 18 beacons/2 s), init_wmac RFSW fix (v0.8.1) confirmed.
   BCN_PSR_RPT reads 0x0001 after writing 0xc001 (bits 15:14 do not read back; code matches Linux core.c:4930, expectation fixed in v0.13.1).
-  TX over the air not yet airtight: v0.13.1 adds `to_us` counter (probe responses with addr1 == our MAC); needs one more run. See `docs/test-checklist.md`. Do not start the frontend shim (stage4-plan WP4-6) before TX is proven.
+  **TX over the air PROVEN (2026-10-07, v0.13.1 run 2):** `probe_resp=11 to_us=11` (probe responses addressed to our MAC), beacons=19, rx 44/44 crc_bad=0 errors=0, tx 5/5 errors=0, link_selftest all expected values. Frontend shim (stage4-plan WP4-6) may start. See `docs/test-checklist.md`.
   Measured seam (2026-10-07): frontend needs ~45 `rtw88_*`/`rtw_pci_*` symbols; PCI coupling in RTW88IEEE80211.cpp is ~8 sites (L35-44, 482-530, 822-863, 933, 982),
   AirPortRTW.cpp has 43 PCI sites. The AirPort-RTW clone is gitignored here, so frontend changes must be kept as patch files in this repo.
   Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, RSSI/phystats, TX report, data-frame txdesc (QoS/rate/key), driver-side rate adaptation (ra_info).

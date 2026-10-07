@@ -6,7 +6,7 @@ Written 2026-10-07. One build, one load, one log.
 - **Run 1 (v0.13.0, 2026-10-07): PASS** on every row except the TX proof. rx_scan: tx_ok=1 tx_fail=0 on ch1-13, AP heard on ch9-13 only (normal +-2 ch leakage of a ch11 AP), crc_bad=0.
   link_selftest: all registers as expected except BCN_PSR_RPT (0x0001 read back after writing 0xc001; bits 15:14 do not read back, code matches Linux core.c:4930; expectation fixed in v0.13.1).
   async_selftest: beacons=18, rx 42/42, tx 5/5, errors=0, tx_done_cb=5.
-- **Open: run 2 (v0.13.1)** only to prove TX over the air via the new `to_us` counter. The rest is already proven and only needs to stay unchanged.
+- **Run 2 (v0.13.1, 2026-10-07): PASS.** `beacons=19 rx 44/44 crc_bad=0 errors=0 tx 5/5 errors=0 probe_resp=11 to_us=11` = TX proven over the air. link_selftest matched all expectations (BCN_PSR_RPT=0x0001, SECCFG=0xcf, HMTFR=0x00).
 
 ## Build / load
 ```
