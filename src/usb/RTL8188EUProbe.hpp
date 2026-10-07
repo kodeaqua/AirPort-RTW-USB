@@ -5,6 +5,7 @@
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/usb/IOUSBHostDevice.h>
 #include <IOKit/usb/IOUSBHostInterface.h>
 #include <IOKit/usb/IOUSBHostPipe.h>
 
@@ -12,6 +13,8 @@ class RTL8188EUProbe : public IOService {
     OSDeclareDefaultStructors(RTL8188EUProbe)
 
 public:
+    bool init(OSDictionary *dict = nullptr) override;
+    IOService *probe(IOService *provider, SInt32 *score) override;
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     bool willTerminate(IOService *provider, IOOptionBits options) override;

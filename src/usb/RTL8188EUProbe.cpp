@@ -37,11 +37,30 @@ IOReturn RTL8188EUProbe::regRead(uint16_t addr, void *out, uint16_t len)
     return kIOReturnSuccess;
 }
 
+bool RTL8188EUProbe::init(OSDictionary *dict)
+{
+    IOLog(LOGP "init (personality matched)\n");
+    return super::init(dict);
+}
+
+IOService *RTL8188EUProbe::probe(IOService *provider, SInt32 *score)
+{
+    IOLog(LOGP "probe provider=%s\n", provider ? provider->getName() : "(null)");
+    return super::probe(provider, score);
+}
+
 bool RTL8188EUProbe::start(IOService *provider)
 {
     if (!super::start(provider)) return false;
 
-    _iface = OSDynamicCast(IOUSBHostInterface, provider);
+    IOLog(LOGP "start provider class=%s\n", provider->getMetaClass()->getClassName());
+    if (OSDynamicCast(IOUSBHostDevice, provider)) {
+        // Diagnostic personality (see Info.plist): matched at device level; decline.
+        IOLog(LOGP "matched at IOUSBHostDevice level (diagnostic), declining\n");
+        return false;
+    }
+
+    _iface =OSDynamicCast(IOUSBHostInterface, provider);
     if (!_iface) { IOLog(LOGP "provider is not IOUSBHostInterface\n"); return false; }
 
     if (!_iface->open(this)) { IOLog(LOGP "open interface failed\n"); return false; }
