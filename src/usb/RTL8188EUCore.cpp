@@ -761,6 +761,9 @@ IOReturn RTL8188EUCore::initWmac()
                          kRcrHtcLocCtrl | kRcrAppendPhystat | kRcrAppendIcv | kRcrAppendMic));
     TRY(write32(kRegMar, 0xffffffff));
     TRY(write32(kRegMar + 4, 0xffffffff));
+    // v0.16.1: hardware read RXFLTMAP2 (0x6a4) = 0x0000 after init, so all data frames were dropped (no EAPOL M1). Accept all data
+    // subtypes, as rtl8xxxu does for chips with init_reg_rxfltmap. GUESS: 8188E needs it too (not verified against source).
+    TRY(write16(0x06a4, 0xffff));
 
     // Adaptive controls
     TRY(read32(kRegResponseRateSet, &v32));

@@ -344,7 +344,9 @@ static void r8_get_stats(struct rtw_dev *dev, uint32_t *tx, uint32_t *rx)
 }
 
 static uint8_t r8_get_tx_nss(struct rtw_dev *dev) { return 1; }
-static uint32_t r8_tx_avail(void) { return g_r8.core ? rtl8188eu_br_tx_free_slots(g_r8.core) : 0; }
+/* The frontend flow control was sized for the PCIe ring (stall below 96 free, resume at 160). The USB core has only 8 TX slots, so
+ * raw counts would stall forever (v0.16.0 log: be_avail=8, stalled=1, qdrop=128). Scale by 32: stall at <3 free, resume at >=5 free. */
+static uint32_t r8_tx_avail(void) { return g_r8.core ? rtl8188eu_br_tx_free_slots(g_r8.core) * 32u : 0; }
 static int r8_tx_busy(void) { return g_r8.core && rtl8188eu_br_tx_free_slots(g_r8.core) < 8; }
 
 static const struct rtw88_core_ops r8188eu_core_ops = {
