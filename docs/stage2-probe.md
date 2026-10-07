@@ -173,3 +173,10 @@ init_phy_rf OK (0x00000000): verify ok: N regs read back, M mismatch (first: reg
 ```
 Pass = `init_phy_rf OK` + `verify ok` with earlier lines intact. Mismatches are informational (some RF regs may not read back
 what was written); send the line either way. Next (3c-4): remaining WMAC/EDCA/beacon/aggregation/LLT/quirks block.
+
+Hardware result (2026-10-07, v0.7.0): `init_phy_rf OK`, `verify ok: 49 regs read back, 13 mismatch (first: reg 0x2f got 0x14140)`
+(table wrote 0x1a060 to reg 0x2f). No transport errors; firmware/init_mac/init_phy_bb lines intact. Mismatch cause unknown.
+
+## v0.7.1 — diagnostic only
+`rfVerify` now logs every mismatch: `rf_verify mismatch: reg 0x.. wrote 0x..... read 0x..... xor 0x.....`.
+No behavior change. Send: `/usr/bin/log show --last 10m --predicate 'eventMessage CONTAINS "RTL8188EUProbe"' | grep -E "rf_verify|init_phy_rf"`

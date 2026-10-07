@@ -586,6 +586,8 @@ IOReturn RTL8188EUProbe::rfVerify(uint32_t *checked, uint32_t *mismatch, uint32_
         (*checked)++;
         if (got != (val & 0xfffff)) {
             if (*mismatch == 0) { *firstBadReg = reg; *firstBadGot = got; }
+            IOLog(LOGP "rf_verify mismatch: reg 0x%02x wrote 0x%05x read 0x%05x xor 0x%05x\n",
+                  reg, val & 0xfffff, got, (val & 0xfffff) ^ got);
             (*mismatch)++;
         }
     }
