@@ -21,14 +21,14 @@ cut 8 (I) and bit 23 (test chip) are rejected by rtl8xxxu (`8188e.c rtl8188eu_id
 - Do not replace your only working EFI; keep a bootable fallback.
 
 ## Test (safest first: load by hand, no OpenCore injection)
-1. Unplug nothing; dongle stays in. `sudo chown -R root:wheel build/out/RTL8188EUProbe.kext`
-2. `sudo kextutil -v build/out/RTL8188EUProbe.kext`
+1. Dongle stays plugged in. If `build/` is root-owned from an earlier manual chown: `sudo chown -R $USER build`
+2. `make load` (copies to a root-owned staging dir, then `kextutil -v`)
    (needs SIP/AMFI relaxed as usual on your Hackintosh; if it refuses, send the output as-is.)
 3. Check attach: `ioreg -l -w0 | grep -i RTL8188EUProbe`
 4. Read the log: `log show --last 5m --predicate 'eventMessage CONTAINS "RTL8188EUProbe"'`
    (also try `sudo dmesg | grep RTL8188EUProbe`)
 5. Unplug/replug the dongle; confirm no panic and the log shows a fresh attach.
-6. `sudo kextunload -b io.github.kodeaqua.RTL8188EUProbe`
+6. `make unload`
 
 ## Expected log
 ```
