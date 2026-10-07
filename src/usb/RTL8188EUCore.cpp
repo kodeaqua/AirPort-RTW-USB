@@ -906,8 +906,15 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
     uint32_t total = rtl8188eu_tx::build((uint8_t *)t.buf->getBytesNoCopy(), frame, len, p);
     IOUSBHostCompletion c = { this, &RTL8188EUCore::txCompleteTramp, &t };
     OSIncrementAtomic((volatile SInt32 *)&_stTxSubmitted);
+    if (_stTxSubmitted <= 6) {   // v0.15.1: first submissions, to diagnose bulk OUT timeouts on ep 0x02
+        const uint8_t *tb = (const uint8_t *)t.buf->getBytesNoCopy();
+        IOLog(LOGP "tx#%d queue=%d pipe=%d len=%u total=%u (mod512=%u) fc=0x%02x%02x dw0=0x%08x dw1=0x%08x\n",
+              (int)_stTxSubmitted, (int)p.queue, pipe, len, total, total % 512, frame[1], frame[0],
+              OSReadLittleInt32(tb, 0), OSReadLittleInt32(tb, 4));
+    }
     IOReturn r = _bulkOut[pipe]->io(t.buf, total, &c, 1000);
     if (r != kIOReturnSuccess) {
+        IOLog(LOGP "tx submit failed 0x%08x pipe=%d\n", r, pipe);
         OSIncrementAtomic((volatile SInt32 *)&_stTxErrors);
         OSBitAndAtomic(~(1u << idx), &_txBusyMask);
     }
@@ -925,7 +932,11 @@ void RTL8188EUCore::txCompleteTramp(void *owner, void *param, IOReturn status, u
 {
     RTL8188EUCore *self = (RTL8188EUCore *)owner; TxSlot *t = (TxSlot *)param;
     OSIncrementAtomic((volatile SInt32 *)&self->_stTxCompleted);
-    if (status != kIOReturnSuccess) OSIncrementAtomic((volatile SInt32 *)&self->_stTxErrors);
+    if (status != kIOReturnSuccess) {
+        if (OSIncrementAtomic((volatile SInt32 *)&self->_stTxErrors) < 6)
+            IOLog(LOGP "tx complete error 0x%08x bytes=%u (submitted=%d completed=%d)\n", status, bytes,
+                  (int)self->_stTxSubmitted, (int)self->_stTxCompleted);
+    }
     void *cookie = t->cookie; t->cookie = nullptr;
     OSBitAndAtomic(~(1u << (t - self->_tx)), &self->_txBusyMask);
     if (self->_txDoneCb) self->_txDoneCb(self->_cbCtx, cookie, status);
