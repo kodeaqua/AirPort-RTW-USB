@@ -20,3 +20,9 @@ it needs real USB/URB/workqueue/skb compat that does not exist yet.
 ## Honest risk statement
 Nothing in WP1-6 can be verified without hardware. WP4/5 touch 8000+ lines of frontend code not written for this device.
 Expect the first integrated boot to fail somewhere; a single log tells which layer. Keep AirPortRTW PCIe path building throughout.
+
+## Status 2026-10-07 (after v0.13.0)
+Done in the probe kext (compiles, untested on hardware): WP1 async RX engine (no RSSI yet), WP2 mgmt-frame TX + async TX pool (no data/QoS/rate-adaptation yet),
+WP3 link regs / CCMP CAM / H2C media status (no configure_filter, no sta_add macid allocation). WP4-6 not started: they depend on TX/RX being proven (docs/test-checklist.md).
+Measured for WP4: ~45 undefined `rtw88_*`/`rtw_pci_*` symbols from the frontend objects; PCI sites in RTW88IEEE80211.cpp ~8, AirPortRTW.cpp 43.
+Proposed WP4 shape: a small `RTW88CoreOps` hook (patch file in this repo, applied to the gitignored clone) replacing the rtw_pci_probe/chip-table block in `start()`.

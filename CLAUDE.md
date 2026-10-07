@@ -55,7 +55,11 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   (table and accessors verified identical to Linux; not a blocker, proof comes from RX). See `docs/stage3c-init.md`.
   3c-4 (WMAC/LLT/EDCA) and 3c-5 (tx power, LC cal, tail) v0.8.0 ran OK on hardware (init_wmac/init_tail; RFSW PAPE-shift bug found, fixed in v0.8.1, awaiting retest; HWSEQ reads 0x7f, unexplained).
   4a passive RX scan (v0.10.0): PASS on hardware (17 mgmt frames, crc_bad=0, AP heard on ch9-13 only; heard_on=1 is a stale-FIFO artifact, see docs/stage3c-init.md).
-  Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, TX path.
+  Written, compiled, NOT yet run on hardware (2026-10-07): v0.10.1 stale-FIFO drain, v0.11.0 active scan + first TX (txdesc32 mgmt), v0.12.x link regs/CCMP CAM/H2C media status,
+  v0.13.0 async bulk RX/TX engine. One combined test: `docs/test-checklist.md`. Do not start the frontend shim (stage4-plan WP4-6) before TX is proven.
+  Measured seam (2026-10-07): frontend needs ~45 `rtw88_*`/`rtw_pci_*` symbols; PCI coupling in RTW88IEEE80211.cpp is ~8 sites (L35-44, 482-530, 822-863, 933, 982),
+  AirPortRTW.cpp has 43 PCI sites. The AirPort-RTW clone is gitignored here, so frontend changes must be kept as patch files in this repo.
+  Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, RSSI/phystats, TX report, data-frame txdesc (QoS/rate/key), driver-side rate adaptation (ra_info).
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)
