@@ -987,8 +987,8 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
         _statLastFrames = fr;
     }
     if ((_stTxSubmitted & 0xff) == 0)
-        IOLog(LOGP "stats: ch=%d tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u ucdata=%u crc=%u c2h=%u err=%u\n",
-              _curChannel, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
+        IOLog(LOGP "stats: rssi=%d ch=%d tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u ucdata=%u crc=%u c2h=%u err=%u\n",
+              (int)(_rssiX8 / 8), _curChannel, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
               (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames, (unsigned)_stRxUcData, (unsigned)_stRxCrcBad,
               (unsigned)_stRxC2h, (unsigned)_stRxErrors);
     IOReturn r = _bulkOut[pipe]->io(t.buf, total, &c, 1000);
@@ -1090,6 +1090,11 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
                 }
                 lastSeq = sq;
             }
+            // v0.19.0: smoothed RSSI of frames addressed to us (RCR has no AAP), input for pickDataRate().
+            if (ri.hasSignal && ri.len >= 24 && !(ri.frame[4] & 1) && (ri.frame[0] & 0x0c) != 0x04) {
+                SInt32 old = self->_rssiX8, x8 = (SInt32)ri.signal * 8;
+                self->_rssiX8 = old == 0 ? x8 : old + (x8 - old) / 8;
+            }
             if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted, ri.hasSignal, ri.signal);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
@@ -1104,6 +1109,20 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
     }
     OSDecrementAtomic(&self->_rxOutstanding);
+}
+
+// GUESS (no TX report / RA yet): conservative RSSI->rate map, about 15-20 dB above typical OFDM sensitivity (54M ~ -74 dBm,
+// 36M ~ -80, 24M ~ -83, 12M ~ -88). Unknown RSSI, group-addressed frames and anything weak stay at the proven 6M.
+uint8_t RTL8188EUCore::pickDataRate(const uint8_t *frame) const
+{
+    if (rtl8188eu_tx::daIsGroup(rtl8188eu_tx::getDA(frame))) return rtl8188eu_tx::kRate6M;
+    int rssi = _rssiX8 / 8;
+    if (_rssiX8 == 0) return rtl8188eu_tx::kRate6M;
+    if (rssi >= -58) return rtl8188eu_tx::kRate54M;
+    if (rssi >= -64) return rtl8188eu_tx::kRate36M;
+    if (rssi >= -70) return rtl8188eu_tx::kRate24M;
+    if (rssi >= -76) return rtl8188eu_tx::kRate12M;
+    return rtl8188eu_tx::kRate6M;
 }
 
 // Hot-unplug (called from AirPortRTW::willTerminate). Abort is thread-safe; teardown itself still happens in stop().

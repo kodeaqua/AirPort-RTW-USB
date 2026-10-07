@@ -56,3 +56,9 @@ Replug: the interface should reappear and join again. Send `sudo dmesg | grep -E
 Test B (sleep/wake): join WPA2, sleep 30 s, wake. Expect `resume check: SYS_CFG read -> 0x00000000 (0x24403735)`,
 `wake complete`, then CoreWiFi rejoins. If `PM transition ... failed` appears, send the lines around it.
 Test C (duplicates): `ping -c 30 8.8.8.8`, then `sudo dmesg | grep -E "rx DUPSEQ|tx ICMP"`.
+
+## v0.19.0: RSSI-based TX rate (NOT yet run on hardware)
+
+Unicast data frames now use a rate from the smoothed RX RSSI (`pickDataRate`): >=-58 dBm 54M, >=-64 36M, >=-70 24M, >=-76 12M,
+else/unknown/group 6M. GUESS thresholds, no feedback loop. Test: `ping -c 30 <gateway>` and a speed test; the `stats:` line now
+shows `rssi=`. If loss or retries get worse than v0.18.0 (6M), tell me and the thresholds go down; revert = one line in `RTL8188EUBridge.cpp`.
