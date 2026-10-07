@@ -958,6 +958,16 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxBuffers);
         if (self->parseRx((const uint8_t *)slot->buf->getBytesNoCopy(), bytes, &ri)) {
             OSIncrementAtomic((volatile SInt32 *)&self->_stRxFrames);
+            // v0.15.0 diagnostic: does any data frame (EAPOL M1) reach the host? Log the first few headers.
+            if (ri.len >= 24 && (ri.frame[0] & 0x0c) == 0x08) {
+                static volatile SInt32 nData;
+                SInt32 n = OSIncrementAtomic(&nData);
+                if (n < 12)
+                    IOLog(LOGP "rx DATA #%d: fc=%02x%02x len=%u a1=%02x:%02x:%02x:%02x:%02x:%02x a2=%02x:%02x:%02x:%02x:%02x:%02x dec=%d\n",
+                          (int)n, ri.frame[0], ri.frame[1], ri.len,
+                          ri.frame[4], ri.frame[5], ri.frame[6], ri.frame[7], ri.frame[8], ri.frame[9],
+                          ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], (int)ri.decrypted);
+            }
             if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
@@ -994,6 +1004,11 @@ IOReturn RTL8188EUCore::rxStart()
 {
     if (!_asyncUp) return kIOReturnNotReady;
     if (_rxRunning) return kIOReturnSuccess;
+    {   // v0.15.0 diagnostic: RX data-frame filter maps (0x6a0 mgmt, 0x6a2 ctrl, 0x6a4 data) as left by init.
+        uint16_t f0 = 0, f1 = 0, f2 = 0;
+        read16(0x06a0, &f0); read16(0x06a2, &f1); read16(0x06a4, &f2);
+        IOLog(LOGP "rx_start: RXFLTMAP0=0x%04x RXFLTMAP1=0x%04x RXFLTMAP2=0x%04x\n", f0, f1, f2);
+    }
     _rxRunning = 1; _rxConsecErr = 0;
     for (int i = 0; i < kRxSlots; i++) {
         IOUSBHostCompletion c = { this, &RTL8188EUCore::rxCompleteTramp, &_rx[i] };
