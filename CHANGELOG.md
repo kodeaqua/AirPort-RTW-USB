@@ -2,9 +2,23 @@
 
 Versions are the standalone probe/core version (`RTL8188EUCore`). "HW" = verified on the author's dongle (0bda:8179, cut D).
 
-## Unreleased (not yet run on hardware)
+## 1.0.0 (2026-10-08)
 
-- fix: after sleep/wake the dongle re-enumerates; the old driver instance never finished terminating (`inactive, busy 1`, `busy timeout ... AirPortRTW, IOUSBHostInterface`) because the USB interface stayed open, so the next `start()` failed with `compat initialization failed` and replug did not help. `didTerminate` now closes the interface (patch 0003, `releaseProvider`). Added `stop`/`teardown`/`didTerminate` logs.
+First release. Native IO80211 Wi-Fi on an RTL8188EU USB dongle: WPA2 join, DHCP, ping and internet work on hardware (v0.17.0), and
+sleep/wake and hot-unplug/replug now work on hardware (patch 0003, v0.18.0 plus the `didTerminate` fix below).
+
+Known issue: after replug or wake the interface comes up and manual join works, but macOS does not auto-join. airportd logs
+`Auto-join aborted (error=(37 'driver not available'))` and `Unexpected event payload length for APPLE80211_M_LINK_CHANGED (expected=32, actual=0)`.
+Patch 0004 (below) is an untested attempt at this; it was released without a hardware run.
+
+- fix: `LINK_CHANGED` is now posted with a 32-byte payload (`isLinkDown`, `voluntary`, `reason`), because Tahoe CoreWiFi drops the event
+  when the payload is empty (patch 0004). GUESS: the last 8 bytes of the 32 are zero; the SDK struct is only 24 bytes. NOT yet run on hardware.
+  If auto-join is still broken, `BSSID_CHANGED` (expected 24 bytes, actual 0, posted by the family, not by this driver) and the
+  ioctl behind `error 37` are the next suspects.
+- fix: after sleep/wake the dongle re-enumerates; the old driver instance never finished terminating (`inactive, busy 1`, `busy timeout ... AirPortRTW, IOUSBHostInterface`) because the USB interface stayed open, so the next `start()` failed with `compat initialization failed` and replug did not help. `didTerminate` now closes the interface (patch 0003, `releaseProvider`). Added `stop`/`teardown`/`didTerminate` logs. HW: sleep/wake and plug/unplug work.
+
+## Older versions
+
 
 ## 0.21.0 (not yet run on hardware)
 - HT20 (11n, 1 stream, MCS0-7, long GI) advertised to the frontend; AP rate set and HT MCS mask feed the rate adaptation through

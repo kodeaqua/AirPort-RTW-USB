@@ -50,7 +50,11 @@ Then a Wi-Fi interface appears in System Settings and the menu bar; scan, join a
 3. firmware download succeeds.
 4. scan lists nearby 2.4 GHz networks.
 5. join WPA2, ping works.
-6. sleep/wake; unplug/replug (v0.18.0, not yet verified on hardware: see `docs/stage5-test.md`).
+6. sleep/wake; unplug/replug (works on hardware as of 1.0.0).
+7. auto-join after wake/replug: **known not to work in 1.0.0**; join manually from the menu bar. Patch 0004 attempts a fix and
+   is untested. To check, wake from sleep, wait about 30 s and see whether the known network joins by itself. If not, send
+   `/usr/bin/log show --last 3m --info --debug --predicate 'process == "airportd"' | grep -E "AUTO-JOIN|Unexpected event payload"`
+   together with `sudo dmesg`.
 
 ## If something fails
 

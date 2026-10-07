@@ -80,3 +80,13 @@ The frontend will also negotiate BlockAck (ADDBA) now; we do not aggregate on TX
 Test: join an 11n AP, look for `peer: supp_rates=0x... ht=1`, `ra: init mask=0x000..`, then run a speed test and send
 `sudo dmesg | grep -E "peer:|ra:|stats:|rtw88: (peer|starting|RX ADDBA)"`. If HT breaks join or stability, set `ht_supported = false` in
 `r8_fill_bands()` (`RTL8188EUHw.c`) to fall back to legacy rates.
+
+## 1.0.0: auto-join after wake/replug (patch 0004, NOT yet run on hardware)
+
+Sleep/wake and plug/unplug work (HW). macOS does not auto-join afterwards, although scan and manual join work. airportd logs:
+`Auto-join aborted (error=(37 'driver not available'))` (also `82 'WiFi interface is OFF'` while the interface is still down) and
+`Unexpected event payload length for APPLE80211_M_LINK_CHANGED (expected=32, actual=0)`. Patch 0004 posts `LINK_CHANGED` with a 32-byte
+payload (GUESS: layout = SDK `apple80211_link_changed_event_data`, 24 bytes, plus 8 zero bytes).
+Test: wake from sleep, wait 30 s without touching Wi-Fi, check whether the known network joins. Repeat with unplug/replug.
+If it still does not join, send `/usr/bin/log show --last 3m --info --debug --predicate 'process == "airportd"' > ~/airportd.txt` and `sudo dmesg > ~/dmesg.txt`.
+Unexplained so far: the failing ioctl behind `error 37` (all logged GETs before the abort return 0), and `BSSID_CHANGED` with an empty payload.

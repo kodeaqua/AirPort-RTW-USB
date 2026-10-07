@@ -1,5 +1,7 @@
 # usbwifi-native-bringup
 
+**Release 1.0.0** (2026-10-08): see [CHANGELOG.md](CHANGELOG.md) for what is verified and the known auto-join limitation.
+
 Native macOS Wi-Fi (menu bar, scan, join WPA2) for a **Realtek RTL8188EU USB dongle** (for example the TP-Link
 `0bda:8179` "802.11n NIC") on a Hackintosh, by extending
 [AirPort-RTW](https://github.com/JoMei9019-real/AirPort-RTW) with a USB transport and a second hardware core.
@@ -20,7 +22,9 @@ Verified on hardware (probe kext and the integrated driver up to join + ping, 20
 | Passive and active scan, TX over the air, CCMP hardware keys | works |
 | Join WPA2 (CCMP), DHCP, ping, internet | works (5/5 ping, 0% loss; occasional duplicate replies, under investigation) |
 | Signal bars (per-frame RSSI from PHY status) | works |
-| Sleep/wake, hot-unplug, software rate adaptation, HT20 (MCS0-7) | **implemented, not yet tested on hardware** (v0.18.0 to v0.21.0) |
+| Sleep/wake, hot-unplug and replug | works (interface comes back, manual join works) |
+| Auto-join after wake or replug | **does not work yet**; join manually from the menu bar. Patch 0004 is an untested attempt (see CHANGELOG) |
+| Software rate adaptation, HT20 (MCS0-7) | implemented, not yet tested on hardware (v0.20.0, v0.21.0) |
 
 Not supported yet: 40 MHz, short GI and TX A-MPDU aggregation, TKIP/WEP, 5 GHz (the chip is 2.4 GHz 1T1R),
 AP mode, BT coexistence. Maximum link is therefore HT20 MCS7 at 65 Mbps (expect roughly 30-45 Mbps real throughput without aggregation).
@@ -51,7 +55,7 @@ Repository layout:
 | Path | Content |
 |---|---|
 | `src/usb/` | RTL8188EU core, USB bridge, mac80211 face, pure helpers (`rtl8188eu_txdesc.h`, `rtl8188eu_ra.h`) |
-| `patches/` | Patches applied to the (gitignored) `AirPort-RTW/` clone: `0001-core-ops`, `0002-usb-provider`, `0003-usb-pm-hotplug` |
+| `patches/` | Patches applied to the (gitignored) `AirPort-RTW/` clone: `0001-core-ops`, `0002-usb-provider`, `0003-usb-pm-hotplug`, `0004-link-changed-payload` |
 | `kext/` | Info.plist of the standalone probe kext |
 | `scripts/` | Firmware fetch, table generator, patch applier, dmesg capture |
 | `tools/` | Host-side unit tests (`make test-txdesc`, `make test-ra`) |

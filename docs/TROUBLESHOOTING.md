@@ -9,6 +9,7 @@
 | Ping shows `DUP!` replies | Known, under investigation. Send `sudo dmesg \| grep -E "rx DUPSEQ\|tx ICMP"` taken right after a 30-packet ping. |
 | Slow throughput | Rate comes from software rate adaptation (v0.20.0) over HT20 MCS0-7 (v0.21.0), no TX aggregation. Look for `ra:` lines (`init mask=... start rate`, `rate idx A -> B`) and `peer:` (AP rate set, `ht=1`). |
 | Join fails or drops only on 11n APs | Try the same AP with HT disabled to confirm (e.g. 11g-only/legacy mode) and send the `peer:` and `ra:` lines; HT is new in v0.21.0. |
+| Does not auto-join after wake or replug | Known in 1.0.0. The interface is up and manual join works. airportd logs `Auto-join aborted (error=(37 'driver not available'))` and `Unexpected event payload length for APPLE80211_M_LINK_CHANGED`. Patch 0004 (32-byte `LINK_CHANGED` payload) is an untested attempt. Send `/usr/bin/log show --last 3m --info --debug --predicate 'process == "airportd"' \| grep -E "AUTO-JOIN\|Unexpected event payload"` and `sudo dmesg`. |
 | Radio dead after sleep | Send the `resume check` / `wake complete` / `PM transition ... failed` lines. Unplug and replug the dongle as a workaround. |
 | Panic | Send the newest file in `/Library/Logs/DiagnosticReports/` and the log lines before it. |
 
