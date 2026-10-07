@@ -117,7 +117,7 @@ firmware RUNNING (0x00000000): FW_DL=0x000300c6
 Pass = `firmware RUNNING`. (v0.4.0 failed in initQueues on the 2-OUT-endpoint dongle; fixed in v0.4.1.)
 Next (3c): LLT init, MAC/BB/RF init per `rtl8xxxu_init_device`; verify against source first.
 
-## v0.5.0 — Stage 3c-1: init_mac (MAC register table)
+## v0.5.0 — Stage 3c-1: init_mac (MAC register table): PASS (2026-10-07)
 Port of `rtl8xxxu_init_mac` (core.c:2187), RTL8188E branch: 92 8-bit writes from `rtl8188e_mac_init_table`
 (generated into `build/fw/rtl8188eu_tables.h` by `scripts/gen-rtl8188eu-tables.py`, `make usbprobe` runs it),
 then `REG_MAX_AGGR_NUM` (0x4ca) 16-bit = 0x0707. Runs right after `firmware RUNNING`, same as Linux order.
@@ -130,3 +130,5 @@ Pass = `init_mac OK` and `firmware RUNNING` still present. Readbacks are informa
 legitimately not read back what was written; report it, do not assume failure).
 If FAILED: send the `initMac:` line (names the register). Do not proceed to BB init.
 Next (3c-2): RF register accessor + `init_phy_bb`.
+
+Hardware result: `init_mac OK (0x00000000)`, all three readbacks matched, `firmware RUNNING` still present.
