@@ -9,10 +9,10 @@
  * steps are ported from Linux rtl8xxxu (see docs/stage3c-init.md, docs/stage4-plan.md).
  *
  * Scope of this first slice (everything else returns -EOPNOTSUPP or is a documented no-op):
- *   - 2.4 GHz channels 1-13, legacy (CCK/OFDM) rates only, no HT (so no A-MPDU, no 40 MHz)
+ *   - 2.4 GHz channels 1-13, legacy (CCK/OFDM) rates and HT20 MCS0-7 (no A-MPDU aggregation on TX, no 40 MHz, no SGI)
  *   - software scan (frontend sw_scan + channel hop); no firmware scan
  *   - CCMP only (set_key returns -EOPNOTSUPP for TKIP/WEP, so such networks cannot be joined)
- *   - fixed 6M data rate (GUESS, no rate adaptation yet); mgmt at 1M
+ *   - data rate from the core's software rate adaptation (RSSI start rate + TX reports); mgmt at 1M
  *   - no TX status reporting (frames are copied into the core's TX buffer and the skb is freed in ops->tx)
  */
 
@@ -162,8 +162,19 @@ static void r8_ops_configure_filter(struct ieee80211_hw *hw, unsigned int change
     *total &= FIF_ALLMULTI | FIF_BCN_PRBRESP_PROMISC | FIF_CONTROL | FIF_OTHER_BSS | FIF_PROBE_REQ;
 }
 
-static int r8_ops_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_sta *sta) { return 0; }
-static int r8_ops_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_sta *sta) { return 0; }
+/* Peer rate set -> software rate adaptation (rtl8xxxu bss_info_changed ASSOC: ramask = supp_rates[0] & 0xfff | mcs.rx_mask[0] << 12). */
+static int r8_ops_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_sta *sta)
+{
+    bool ht = sta->deflink.ht_cap.ht_supported;
+    rtl8188eu_br_set_peer(g_r8.core, (uint32_t)sta->deflink.supp_rates[NL80211_BAND_2GHZ] & 0xfff,
+                          ht ? sta->deflink.ht_cap.mcs.rx_mask[0] : 0, ht);
+    return 0;
+}
+static int r8_ops_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif, struct ieee80211_sta *sta)
+{
+    rtl8188eu_br_clear_peer(g_r8.core);
+    return 0;
+}
 
 /* bss_conf->basic_rates is a bitmap over band->bitrates[] indexes, which here equals the rtl rate order. */
 static void r8_ops_bss_info_changed(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
@@ -243,7 +254,16 @@ static void r8_fill_bands(void)
     g_r8.band.n_channels = R8188EU_NCHAN;
     g_r8.band.bitrates = g_r8.rates;
     g_r8.band.n_bitrates = R8188EU_NRATE;
-    /* ht_cap left zeroed: ht_supported = false (legacy only in this slice) */
+    /* HT20, 1 stream, MCS0-7, long GI, no STBC/LDPC/greenfield, no 40 MHz (TX descriptor has no HT40/SGI/A-MPDU bits ported).
+     * GUESS: A-MPDU parameters; the chip delivers each MPDU as its own bulk IN packet (RX aggregation off), TX never aggregates
+     * (AGG_BREAK), the frontend still negotiates BlockAck and reorders downlink A-MPDUs. */
+    g_r8.band.ht_cap.ht_supported = true;
+    g_r8.band.ht_cap.cap = 0x000c;                        /* SM power save: disabled (value 3 << 2) */
+    g_r8.band.ht_cap.ampdu_factor = IEEE80211_HT_MAX_AMPDU_16K;
+    g_r8.band.ht_cap.ampdu_density = IEEE80211_HT_MPDU_DENSITY_8;
+    g_r8.band.ht_cap.mcs.rx_mask[0] = 0xff;               /* MCS0-7 */
+    g_r8.band.ht_cap.mcs.rx_highest = 65;                 /* Mbps, MCS7 20 MHz long GI */
+    g_r8.band.ht_cap.mcs.tx_params = 1;                   /* IEEE80211_HT_MCS_TX_DEFINED */
 }
 
 static int r8_probe(void *transport)

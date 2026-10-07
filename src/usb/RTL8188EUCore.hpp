@@ -107,8 +107,10 @@ public:
     static void rxCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
     static void txCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
     IOReturn asyncStart();      // allocate buffers
-    uint8_t  pickDataRate(const uint8_t *frame, uint8_t *ptStage);   // RA decision_rate once initialised, RSSI map before
-    void     handleTxReport(const uint8_t *b, uint32_t len);   // unicast data rate from smoothed RSSI (no TX-report RA yet)
+    uint8_t  pickDataRate(const uint8_t *frame, uint16_t len, uint8_t *ptStage);   // RA decision_rate once initialised, RSSI map before
+    void     handleTxReport(const uint8_t *b, uint32_t len);
+    void     setPeer(uint32_t suppRates, uint8_t htMcs0, bool ht);   // station added (rates/HT of the AP); restarts RA
+    void     clearPeer();   // unicast data rate from smoothed RSSI (no TX-report RA yet)
     void     markGone();        // hot-unplug: fail all further I/O fast (NoDevice), abort pipes; safe from any thread
     IOReturn resumeCheck();     // after system wake: clear pipe stalls, check the dongle still answers register reads
     void     asyncStop();       // stop RX, drain TX, free buffers
@@ -135,6 +137,11 @@ public:
     bool                      _open   = false;
     volatile SInt32           _rssiX8 = 0;          // EWMA of unicast RX signal in dBm*8 (0 = no sample yet)
     rtl8188eu_ra::Info        _ra = {};
+    IOSimpleLock             *_raLock = nullptr;     // protects _ra between TX path and RX-completion report handler
+    uint32_t                  _peerSupp = 0x0fff;
+    uint8_t                   _peerHtMcs0 = 0;
+    bool                      _peerHt = false;
+    uint64_t                  _raRefreshAbs = 0;
     volatile SInt32           _raValid = 0, _rptTimePending = 0, _raLogged = 0;
     volatile uint32_t         _rptTimeNew = 0, _stRaReports = 0;
     volatile SInt32           _gone   = 0;          // set by markGone() once the device is terminating

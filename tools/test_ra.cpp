@@ -34,6 +34,20 @@ int main() {
     Info r2; init(&r2, 0x0ff0, 0x0b, false); CHECK(r2.lowest_rate == 4);
     r2.rssi_sta_ra = 40;
     for (int i = 0; i < 60; i++) { rpt(&r2, 0, 20, 20, 20, 20, 10); CHECK(r2.decision_rate >= 4); }
+    // rtl8xxxu_refresh_rate_mask port: HT peer (MCS0-7) and legacy BG peer, three signal levels (snr = dBm + 100)
+    Info h; init(&h, 0x0fff, 0, false);
+    CHECK(refreshRateMask(&h, 60, 0xfff, 0xff, true, true));  CHECK(h.rate_mask == 0x000f0000 && h.rssi_level == 1 && h.lowest_rate == 16 && h.highest_rate == 19);
+    CHECK(!refreshRateMask(&h, 60, 0xfff, 0xff, true, false));                        // same level, no force: unchanged
+    CHECK(refreshRateMask(&h, 40, 0xfff, 0xff, true, false)); CHECK(h.rate_mask == 0x000ff000 && h.rssi_level == 2);
+    CHECK(!refreshRateMask(&h, 54, 0xfff, 0xff, true, false));                        // hysteresis: MID needs snr > 55 to go HIGH
+    CHECK(refreshRateMask(&h, 10, 0xfff, 0xff, true, false)); CHECK(h.rate_mask == 0x000ff005 && h.rssi_level == 3);
+    h.decision_rate = h.pre_rate = 3; clampRate(&h); CHECK(h.decision_rate == 3);     // clamp is range-only like Linux (membership is handled by rateUp/rateDown)
+    h.decision_rate = h.pre_rate = 30; clampRate(&h); CHECK(h.decision_rate == 19);
+    Info g; init(&g, 0x0fff, 0, false);
+    CHECK(refreshRateMask(&g, 60, 0xfff, 0, false, true)); CHECK(g.rate_mask == 0x00000f00 && g.highest_rate == 11 && g.lowest_rate == 8);
+    CHECK(refreshRateMask(&g, 30, 0xfff, 0, false, false)); CHECK(g.rate_mask == 0x00000ff0);
+    CHECK(refreshRateMask(&g, 5, 0xfff, 0, false, false)); CHECK(g.rate_mask == 0x00000ff5);
+    g.decision_rate = g.pre_rate = 11; clampRate(&g); CHECK(g.decision_rate == 11);
     printf(fails ? "test_ra: FAILED (%d)\n" : "test_ra: OK\n", fails);
     return fails != 0;
 }

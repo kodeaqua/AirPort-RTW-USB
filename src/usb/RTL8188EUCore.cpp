@@ -520,6 +520,7 @@ bool RTL8188EUCore::init()
 {
     if (!super::init()) return false;
     _lock = IORecursiveLockAlloc();
+    _raLock = IOSimpleLockAlloc();
     return _lock != nullptr;
 }
 
@@ -1113,34 +1114,87 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
 }
 
 // GUESS (thresholds): RSSI->rate map used only as the START rate of the rate adaptation and before any RSSI is known.
-// ~15-20 dB above typical OFDM sensitivity (54M ~ -74 dBm, 36M ~ -80, 24M ~ -83, 12M ~ -88); unknown RSSI stays at the proven 6M.
-static uint8_t rssiStartRate(int rssiDbm, bool known)
+// Legacy: ~15-20 dB above typical OFDM sensitivity (54M ~ -74 dBm, 36M ~ -80, 24M ~ -83, 12M ~ -88). HT20 (1SS, long GI): MCS7 ~ -72,
+// MCS5 ~ -76, MCS3 ~ -82, MCS1 ~ -88 with a similar margin. Unknown RSSI stays at the proven 6M.
+static uint8_t rssiStartRate(int rssiDbm, bool ht)
 {
-    if (!known) return rtl8188eu_tx::kRate6M;
-    if (rssiDbm >= -58) return rtl8188eu_tx::kRate54M;
-    if (rssiDbm >= -64) return rtl8188eu_tx::kRate36M;
-    if (rssiDbm >= -70) return rtl8188eu_tx::kRate24M;
-    if (rssiDbm >= -76) return rtl8188eu_tx::kRate12M;
-    return rtl8188eu_tx::kRate6M;
+    using namespace rtl8188eu_tx;
+    if (ht) {
+        if (rssiDbm >= -58) return kRateMcs7;
+        if (rssiDbm >= -64) return kRateMcs0 + 5;
+        if (rssiDbm >= -70) return kRateMcs0 + 3;
+        if (rssiDbm >= -76) return kRateMcs0 + 1;
+        return kRateMcs0;
+    }
+    if (rssiDbm >= -58) return kRate54M;
+    if (rssiDbm >= -64) return kRate36M;
+    if (rssiDbm >= -70) return kRate24M;
+    if (rssiDbm >= -76) return kRate12M;
+    return kRate6M;
+}
+
+static uint8_t snrFromRssiX8(SInt32 x8)   // rtl8xxxu_signal_to_snr
+{
+    int v = x8 / 8 + 100;
+    return (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+}
+
+void RTL8188EUCore::setPeer(uint32_t suppRates, uint8_t htMcs0, bool ht)
+{
+    IOSimpleLockLock(_raLock);
+    _peerSupp = suppRates; _peerHtMcs0 = htMcs0; _peerHt = ht && htMcs0 != 0;
+    _raValid = 0;                                  // re-init from the next TX with the new rate set
+    IOSimpleLockUnlock(_raLock);
+    IOLog(LOGP "peer: supp_rates=0x%03x ht=%d mcs_rx0=0x%02x\n", suppRates, (int)_peerHt, htMcs0);
+}
+
+void RTL8188EUCore::clearPeer()
+{
+    IOSimpleLockLock(_raLock);
+    _peerSupp = 0x0fff; _peerHtMcs0 = 0; _peerHt = false; _raValid = 0;
+    IOSimpleLockUnlock(_raLock);
 }
 
 // Unicast data rate. After the first RSSI sample the software RA (rtl8188eu_ra.h, port of rtl8xxxu 8188e.c) owns the rate and is
-// fed by TX reports (rpt_sel=2) in handleTxReport(); group-addressed frames stay at 6M. Called from the TX path only.
-uint8_t RTL8188EUCore::pickDataRate(const uint8_t *frame, uint8_t *ptStage)
+// fed by TX reports (rpt_sel=2) in handleTxReport(); group-addressed and EAPOL frames stay at 6M (key handshake must not depend
+// on RA). The rate mask follows rtl8xxxu_refresh_rate_mask and is re-evaluated every 2 s. Called from the TX path only.
+uint8_t RTL8188EUCore::pickDataRate(const uint8_t *frame, uint16_t len, uint8_t *ptStage)
 {
     *ptStage = rtl8188eu_tx::kPtStageInit;
     if (rtl8188eu_tx::daIsGroup(rtl8188eu_tx::getDA(frame))) return rtl8188eu_tx::kRate6M;
+    uint32_t hl = (frame[0] & 0x80) ? 26 : 24;
+    if (len >= hl + 8 && frame[hl + 6] == 0x88 && frame[hl + 7] == 0x8e) return rtl8188eu_tx::kRate6M;   // EAPOL
+    if (_rssiX8 == 0 && !_raValid) return rtl8188eu_tx::kRate6M;
+    uint64_t nowAbs, ns;
+    clock_get_uptime(&nowAbs);
+    IOSimpleLockLock(_raLock);
     if (!_raValid) {
-        if (_rssiX8 == 0) return rtl8188eu_tx::kRate6M;
-        uint8_t start = rssiStartRate(_rssiX8 / 8, true);
-        rtl8188eu_ra::init(&_ra, 0x0fff, start, false);   // legacy rates only; this dongle is cut D (not I)
+        uint8_t start = rssiStartRate(_rssiX8 / 8, _peerHt);
+        rtl8188eu_ra::init(&_ra, 0x0fff, 0, false);   // this dongle is cut D (not I)
+        rtl8188eu_ra::refreshRateMask(&_ra, snrFromRssiX8(_rssiX8), _peerSupp, _peerHtMcs0, _peerHt, true);
+        _ra.decision_rate = _ra.pre_rate = start;
+        rtl8188eu_ra::clampRate(&_ra);
+        _ra.nsc_up = _ra.nsc_down = ((uint32_t)rtl8188eu_ra::kNThresholdHigh[_ra.decision_rate] + rtl8188eu_ra::kNThresholdLow[_ra.decision_rate]) / 2;
         _raLogged = 0;
+        _raRefreshAbs = nowAbs;
         __sync_synchronize();
         _raValid = 1;
-        IOLog(LOGP "ra: init start rate idx %u (rssi %d dBm)\n", start, (int)(_rssiX8 / 8));
+        IOLog(LOGP "ra: init mask=0x%08x level=%u start rate idx %u (rssi %d dBm, ht=%d)\n", _ra.rate_mask, _ra.rssi_level, _ra.decision_rate,
+              (int)(_rssiX8 / 8), (int)_peerHt);
+    } else {
+        absolutetime_to_nanoseconds(nowAbs - _raRefreshAbs, &ns);
+        if (ns >= 2000000000ull) {   // rtl8xxxu_watchdog_callback period (2 s)
+            _raRefreshAbs = nowAbs;
+            if (rtl8188eu_ra::refreshRateMask(&_ra, snrFromRssiX8(_rssiX8), _peerSupp, _peerHtMcs0, _peerHt, false) && _raLogged < 60) {
+                _raLogged++;
+                IOLog(LOGP "ra: mask 0x%08x level=%u rate idx %u (rssi %d dBm)\n", _ra.rate_mask, _ra.rssi_level, _ra.decision_rate, (int)(_rssiX8 / 8));
+            }
+        }
     }
     *ptStage = _ra.pt_stage;
-    return _ra.decision_rate;
+    uint8_t r = _ra.decision_rate;
+    IOSimpleLockUnlock(_raLock);
+    return r;
 }
 
 // TX report type 2 (rtl8188e_handle_ra_tx_report2, station case: only MACID 0). Runs in the USB completion: no sync USB I/O here,
@@ -1152,16 +1206,18 @@ void RTL8188EUCore::handleTxReport(const uint8_t *b, uint32_t len)
     const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12), dw4 = OSReadLittleInt32(b, 16);
     if (((dw3 >> 14) & 3) != 2) return;
     if ((dw0 & 0x3ff) < rtl8188eu_ra::kItemSize || !(dw4 & 1)) return;
-    int rssi = _rssiX8 / 8 + 100;                                    // rtl8xxxu_signal_to_snr: dBm - NOISE_FLOOR_MIN(-100), 0..100
-    _ra.rssi_sta_ra = (uint8_t)(rssi < 0 ? 0 : rssi > 100 ? 100 : rssi);
+    IOSimpleLockLock(_raLock);
+    if (!_raValid) { IOSimpleLockUnlock(_raLock); return; }
+    _ra.rssi_sta_ra = snrFromRssiX8(_rssiX8);                          // rtl8xxxu_signal_to_snr: dBm - NOISE_FLOOR_MIN(-100), 0..100
     uint8_t before = _ra.decision_rate;
     uint16_t newTime = 0;
     OSIncrementAtomic((volatile SInt32 *)&_stRaReports);
     if (rtl8188eu_ra::handleItem(&_ra, b + 24, &newTime)) { _rptTimeNew = newTime; _rptTimePending = 1; }
-    if (_ra.decision_rate != before && _raLogged < 60) {
+    uint8_t after = _ra.decision_rate; uint16_t r0 = _ra.retry[0], r1 = _ra.retry[1], r2 = _ra.retry[2], r3 = _ra.retry[3], r4 = _ra.retry[4], dr = _ra.drop, ra8 = _ra.rssi_sta_ra;
+    IOSimpleLockUnlock(_raLock);
+    if (after != before && _raLogged < 60) {
         _raLogged++;
-        IOLog(LOGP "ra: rate idx %u -> %u (retry %u %u %u %u %u drop %u, rssi_ra %u)\n", before, _ra.decision_rate, _ra.retry[0], _ra.retry[1],
-              _ra.retry[2], _ra.retry[3], _ra.retry[4], _ra.drop, _ra.rssi_sta_ra);
+        IOLog(LOGP "ra: rate idx %u -> %u (retry %u %u %u %u %u drop %u, rssi_ra %u)\n", before, after, r0, r1, r2, r3, r4, dr, ra8);
     }
 }
 
@@ -1906,5 +1962,6 @@ void RTL8188EUCore::free()
 {
     closeAll();
     if (_lock) { IORecursiveLockFree(_lock); _lock = nullptr; }
+    if (_raLock) { IOSimpleLockFree(_raLock); _raLock = nullptr; }
     super::free();
 }

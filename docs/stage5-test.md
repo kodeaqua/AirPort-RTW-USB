@@ -71,3 +71,12 @@ Flow: first unicast RSSI sample -> RA starts at the v0.19.0 RSSI-map rate -> TX 
 Legacy rates only (mask 0x0fff). RA resets on join/leave. GUESS: start rate; whether reports really arrive every ~200 ms is unverified.
 Look for in dmesg: `ra: init start rate idx N`, `ra: rate idx A -> B (retry ...)`. If you never see a rate change during a long
 transfer, or the rate sticks at 1M, send `sudo dmesg | grep -E "ra:|stats:"`.
+
+## v0.21.0: HT20 (NOT yet run on hardware)
+
+The face now advertises HT20 1SS MCS0-7 (`ht_cap`), `sta_add` passes the AP's supported rates and MCS mask to the core, and the RA mask
+follows `rtl8xxxu_refresh_rate_mask` (signal level: HIGH = MCS4-7, MID = MCS0-7, LOW = MCS0-7 + 1M/5.5M; legacy AP: 24-54M / 6-54M / 6-54M + 1M/5.5M).
+The frontend will also negotiate BlockAck (ADDBA) now; we do not aggregate on TX (AGG_BREAK), downlink A-MPDUs are reordered by the frontend.
+Test: join an 11n AP, look for `peer: supp_rates=0x... ht=1`, `ra: init mask=0x000..`, then run a speed test and send
+`sudo dmesg | grep -E "peer:|ra:|stats:|rtw88: (peer|starting|RX ADDBA)"`. If HT breaks join or stability, set `ht_supported = false` in
+`r8_fill_bands()` (`RTL8188EUHw.c`) to fall back to legacy rates.

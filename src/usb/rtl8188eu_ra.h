@@ -71,6 +71,7 @@ struct Info {                       // struct rtl8xxxu_ra_info
     uint16_t retry[5], drop, rpt_time, pre_min_rpt_time;
     uint8_t  dynamic_tx_rpt_timing_counter, ra_waiting_counter, ra_pending_counter, ra_drop_after_down;
     uint8_t  pt_try_state, pt_stage, pt_stop_count, pt_pre_rate, pt_pre_rssi, pt_mode_ss, ra_stage, pt_smooth_factor;
+    uint8_t  rssi_level;            // RTL8XXXU_RATR_STA_*: 0 init, 1 high, 2 mid, 3 low
     bool     cutI;
 };
 
@@ -102,6 +103,38 @@ inline void init(Info *ra, uint32_t rateMask, uint8_t startRate, bool cutI)
     ra->rpt_time = 0x927c;
     ra->pt_stage = 5;
     ra->pt_smooth_factor = 192;
+}
+
+// Keep the current decision/pre rate inside [lowest, highest] of the (new) mask.
+inline void clampRate(Info *ra)
+{
+    if (ra->decision_rate > ra->highest_rate) ra->decision_rate = ra->highest_rate;
+    if (ra->decision_rate < ra->lowest_rate) ra->decision_rate = ra->lowest_rate;
+    ra->pre_rate = ra->decision_rate;
+}
+
+// Port of rtl8xxxu_refresh_rate_mask (core.c, torvalds/linux master 2026-10-08) for the 2.4 GHz cases we can have:
+// legacy B/G AP (BG) or HT20 1SS AP (BGN). `snr` = rtl8xxxu_signal_to_snr (dBm + 100, 0..100). Returns true when the mask
+// changed (level change or force). Deviations: no SGI, 20 MHz only, wireless-mode detection reduced to ht yes/no.
+// A result of 0 keeps the old mask (never leave the RA without a rate).
+inline bool refreshRateMask(Info *ra, uint8_t snr, uint32_t suppRates, uint8_t htMcs0, bool ht, bool force)
+{
+    const uint8_t kHigh = 50, kLow = 20, kGoUpGap = 5;   // RTL8XXXU_SNR_THRESH_HIGH / _LOW, go_up_gap
+    uint8_t high = kHigh, low = kLow, level = ra->rssi_level;
+    if (level == 2) high += kGoUpGap;
+    else if (level == 3) { high += kGoUpGap; low += kGoUpGap; }
+    uint8_t nl = snr > high ? 1 : snr > low ? 2 : 3;
+    if (nl == ra->rssi_level && !force) return false;
+    uint32_t bitmap = (suppRates & 0xfff) | (ht ? (uint32_t)htMcs0 << 12 : 0);
+    if (ht) bitmap &= nl == 1 ? 0x000f0000u : nl == 2 ? 0x000ff000u : 0x000ff005u;
+    else    bitmap &= nl == 1 ? 0x00000f00u : nl == 2 ? 0x00000ff0u : 0x00000ff5u;
+    ra->rssi_level = nl;
+    if (!bitmap) return false;
+    ra->rate_mask = bitmap;
+    ra->sgi_enable = 0;
+    arfbRefresh(ra);
+    clampRate(ra);
+    return true;
 }
 
 inline void setTxRptTiming(Info *ra, uint8_t timing)

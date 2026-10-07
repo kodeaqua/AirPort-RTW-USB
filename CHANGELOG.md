@@ -2,6 +2,10 @@
 
 Versions are the standalone probe/core version (`RTL8188EUCore`). "HW" = verified on the author's dongle (0bda:8179, cut D).
 
+## 0.21.0 (not yet run on hardware)
+- HT20 (11n, 1 stream, MCS0-7, long GI) advertised to the frontend; AP rate set and HT MCS mask feed the rate adaptation through
+  a port of `rtl8xxxu_refresh_rate_mask` (mask by signal level, re-evaluated every 2 s). EAPOL frames always go out at 6M.
+  No TX A-MPDU aggregation, no 40 MHz, no SGI yet. Host test extended.
 ## 0.20.0 (not yet run on hardware)
 - Software rate adaptation ported from rtl8xxxu `8188e.c` (TX report type 2, rate decision, power-training state), `src/usb/rtl8188eu_ra.h`,
   tables checked number-for-number against Linux; host test `make test-ra`. Legacy rates only.

@@ -30,6 +30,8 @@ void  rtl8188eu_hw_invalidate_init(void);                /* wake: next ops start
 void  rtl8188eu_hw_set_core(void *core);
 void  rtl8188eu_hw_register(bool on);                    /* install/remove the rtw88_core_ops table */
 
+void  rtl8188eu_br_set_peer(void *core, uint32_t supp_rates, uint8_t ht_mcs_rx0, bool ht);   /* AP rate set, restarts rate adaptation */
+void  rtl8188eu_br_clear_peer(void *core);
 int   rtl8188eu_br_init_hw(void *core);                  /* full init chain, idempotent per attach */
 void  rtl8188eu_br_get_mac(void *core, uint8_t mac[6]);
 int   rtl8188eu_br_async_start(void *core, rtl8188eu_rx_fn rx, rtl8188eu_txdone_fn txdone, void *ctx);

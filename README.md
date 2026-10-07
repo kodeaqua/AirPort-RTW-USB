@@ -20,10 +20,10 @@ Verified on hardware (probe kext and the integrated driver up to join + ping, 20
 | Passive and active scan, TX over the air, CCMP hardware keys | works |
 | Join WPA2 (CCMP), DHCP, ping, internet | works (5/5 ping, 0% loss; occasional duplicate replies, under investigation) |
 | Signal bars (per-frame RSSI from PHY status) | works |
-| Sleep/wake, hot-unplug, software rate adaptation, RSSI start rate | **implemented, not yet tested on hardware** (v0.18.0 to v0.20.0) |
+| Sleep/wake, hot-unplug, software rate adaptation, HT20 (MCS0-7) | **implemented, not yet tested on hardware** (v0.18.0 to v0.21.0) |
 
-Not supported yet: 11n/HT (no MCS rates, 20/40 MHz HT, A-MPDU), TKIP/WEP, 5 GHz (the chip is 2.4 GHz 1T1R),
-AP mode, BT coexistence. Maximum link is therefore legacy 54 Mbps (realistically about 20-25 Mbps).
+Not supported yet: 40 MHz, short GI and TX A-MPDU aggregation, TKIP/WEP, 5 GHz (the chip is 2.4 GHz 1T1R),
+AP mode, BT coexistence. Maximum link is therefore HT20 MCS7 at 65 Mbps (expect roughly 30-45 Mbps real throughput without aggregation).
 
 Per-release detail: [CHANGELOG.md](CHANGELOG.md). Test steps and what to send back on failure:
 [docs/stage5-test.md](docs/stage5-test.md).

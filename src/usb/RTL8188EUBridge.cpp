@@ -30,6 +30,9 @@ void rtl8188eu_core_destroy(void *core)
 void rtl8188eu_core_mark_gone(void *core) { if (core) C(core)->markGone(); }
 int  rtl8188eu_core_resume_check(void *core) { return core ? C(core)->resumeCheck() : kIOReturnNotReady; }
 
+void rtl8188eu_br_set_peer(void *core, uint32_t supp, uint8_t ht_mcs0, bool ht) { C(core)->setPeer(supp, ht_mcs0, ht); }
+void rtl8188eu_br_clear_peer(void *core) { C(core)->clearPeer(); }
+
 int rtl8188eu_br_init_hw(void *core) { return C(core)->initHardware(); }
 
 void rtl8188eu_br_get_mac(void *core, uint8_t mac[6]) { C(core)->getMac(mac); }
@@ -67,7 +70,7 @@ int rtl8188eu_br_tx(void *core, const uint8_t *frame, uint16_t len, const rtl818
     rtl8188eu_tx::Params q = {};
     q.queue = rtl8188eu_tx::selectQueue(frame, p->ac);
     // GUESS: RSSI start rate, then software RA from TX reports (see pickDataRate); mgmt is always 1M in the builder.
-    q.rate = C(core)->pickDataRate(frame, &q.ptStage);
+    q.rate = C(core)->pickDataRate(frame, len, &q.ptStage);
     q.sec = p->ccmp ? rtl8188eu_tx::kSecAes : rtl8188eu_tx::kSecNone;
     q.shortPreamble = p->short_preamble;
     q.useRts = p->use_rts;
