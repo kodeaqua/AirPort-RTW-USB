@@ -88,6 +88,23 @@ private:
     IOReturn reportConnect(uint8_t macid, bool connect);
     void     linkSelfTest();
     IOReturn txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq);
+    IOReturn fillTxDesc(uint8_t *d, const uint8_t *frame, uint16_t len, uint16_t seq);
+
+    // Stage 4d: async engine. Callbacks run on the USB workloop; keep them short and non-blocking.
+    typedef void (*RxCallback)(void *ctx, const uint8_t *frame, uint32_t len);       // one received 802.11 frame (no FCS)
+    typedef void (*TxDoneCallback)(void *ctx, void *cookie, IOReturn status);
+    struct RxInfo { const uint8_t *frame; uint32_t len; bool crcBad; bool c2h; };
+    struct RxSlot { IOBufferMemoryDescriptor *buf; };
+    struct TxSlot { IOBufferMemoryDescriptor *buf; void *cookie; };
+    static bool parseRx(const uint8_t *b, uint32_t got, RxInfo *out);
+    static void rxCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
+    static void txCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
+    IOReturn asyncStart();      // allocate buffers
+    void     asyncStop();       // stop RX, drain TX, free buffers
+    IOReturn rxStart();
+    void     rxStop();
+    IOReturn txSubmitMgmt(const uint8_t *frame, uint16_t len, uint16_t seq, void *cookie);
+    void     asyncSelfTest();
     IOReturn phyLcCalibrate();
     IOReturn initTail();
 
@@ -105,6 +122,16 @@ private:
     IOBufferMemoryDescriptor *_blkBuf = nullptr;   // 196 bytes, writeN chunk
     bool                      _open   = false;
     uint8_t                   _nextMbox = 0;
+    bool                      _asyncUp = false;
+    RxSlot                    _rx[4] = {};
+    TxSlot                    _tx[8] = {};
+    volatile SInt32           _rxOutstanding = 0, _rxRunning = 0, _rxConsecErr = 0;
+    volatile UInt32           _txBusyMask = 0;
+    volatile UInt32           _stRxSubmitted = 0, _stRxCompleted = 0, _stRxBuffers = 0, _stRxFrames = 0, _stRxCrcBad = 0,
+                              _stRxC2h = 0, _stRxErrors = 0, _stTxSubmitted = 0, _stTxCompleted = 0, _stTxErrors = 0;
+    RxCallback                _rxCb = nullptr;
+    TxDoneCallback            _txDoneCb = nullptr;
+    void                     *_cbCtx = nullptr;
     uint32_t                  _camMap = 0;   // used security CAM entries
     uint8_t                   _efuse[512];   // EFUSE_MAP_LEN, logical map, 0xff = unprogrammed
 };

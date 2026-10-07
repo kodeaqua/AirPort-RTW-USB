@@ -140,6 +140,7 @@ enum {
     kRegSecurityCfg = 0x0680, kCrSecurityEnable = 1u << 9,
     kSecCfgTxUseDefkey = 1u << 0, kSecCfgRxUseDefkey = 1u << 1, kSecCfgTxSecEnable = 1u << 2,
     kSecCfgRxSecEnable = 1u << 3, kSecCfgTxbcUseDefkey = 1u << 6, kSecCfgRxbcUseDefkey = 1u << 7,
+    kRxSlots = 4, kRxBufLen = 4096, kTxSlots = 8, kTxBufLen = 2048,
     kRegHmtfr = 0x01cc, kRegHmbox0 = 0x01d0, kH2cMaxMbox = 4,
     kH2cMediaStatusRpt = 0x01, kH2cRoleAp = 2,     // H2C_8723B_MEDIA_STATUS_RPT, H2C_MACID_ROLE_AP (rtl8xxxu.h:1357,1338)
     kMaxSecCam = 32,                 // fops->max_sec_cam_num for 8188eu
@@ -873,11 +874,8 @@ IOReturn RTL8188EUProbe::setMacAddr()
 // Port of rtl8xxxu_tx (core.c:5456) + rtl8xxxu_fill_txdesc_v3 (core.c:5378) for the mgmt, non-QoS, no-key, no-AMPDU case.
 // With 2 bulk OUT eps (high+normal) MGNT maps to pipe index 0 (init_queue_priority case 2, mgp = 0) => _bulkOut[0].
 // 8188e rate-adaptation / tx-report handling is NOT ported; the TX report (C2H) is ignored.
-IOReturn RTL8188EUProbe::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq)
+IOReturn RTL8188EUProbe::fillTxDesc(uint8_t *d, const uint8_t *frame, uint16_t len, uint16_t seq)
 {
-    if (!_bulkOut[0]) return kIOReturnNotReady;
-    if (len < 24 || kTxDescSize + len > buf->getLength()) return kIOReturnBadArgument;
-    uint8_t *d = (uint8_t *)buf->getBytesNoCopy();
     memset(d, 0, kTxDescSize);
     memcpy(d + kTxDescSize, frame, len);
     uint32_t dw0 = kTxdw0Own | kTxdw0Fs | kTxdw0Ls;
@@ -894,8 +892,198 @@ IOReturn RTL8188EUProbe::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *fr
     uint16_t csum = 0;                                           // rtl8xxxu_calc_tx_desc_csum: XOR of 16 le16 words, csum field zero
     for (int i = 0; i < kTxDescSize / 2; i++) csum ^= OSReadLittleInt16(d, i * 2);
     OSWriteLittleInt16(d, 28, csum);
+    return kIOReturnSuccess;
+}
+
+IOReturn RTL8188EUProbe::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq)
+{
+    if (!_bulkOut[0]) return kIOReturnNotReady;
+    if (len < 24 || kTxDescSize + len > buf->getLength()) return kIOReturnBadArgument;
+    fillTxDesc((uint8_t *)buf->getBytesNoCopy(), frame, len, seq);
     uint32_t sent = 0;
     return _bulkOut[0]->io(buf, kTxDescSize + len, sent, 500);
+}
+
+// ---- Stage 4d: asynchronous TX/RX engine (foundation for the frontend shim). Not hardware-tested yet. ----
+
+// Async TX of one management frame. Slot pool of kTxSlots; the completion releases the slot and calls _txDoneCb.
+IOReturn RTL8188EUProbe::txSubmitMgmt(const uint8_t *frame, uint16_t len, uint16_t seq, void *cookie)
+{
+    if (!_bulkOut[0] || !_asyncUp) return kIOReturnNotReady;
+    if (len < 24 || kTxDescSize + len > kTxBufLen) return kIOReturnBadArgument;
+    int idx = -1;
+    for (int i = 0; i < kTxSlots; i++) {
+        if (!(OSBitOrAtomic(1u << i, &_txBusyMask) & (1u << i))) { idx = i; break; }      // returns the old value
+    }
+    if (idx < 0) return kIOReturnNoResources;
+    TxSlot &t = _tx[idx];
+    t.cookie = cookie;
+    fillTxDesc((uint8_t *)t.buf->getBytesNoCopy(), frame, len, seq);
+    IOUSBHostCompletion c = { this, &RTL8188EUProbe::txCompleteTramp, &t };
+    OSIncrementAtomic((volatile SInt32 *)&_stTxSubmitted);
+    IOReturn r = _bulkOut[0]->io(t.buf, kTxDescSize + len, &c, 1000);
+    if (r != kIOReturnSuccess) {
+        OSIncrementAtomic((volatile SInt32 *)&_stTxErrors);
+        OSBitAndAtomic(~(1u << idx), &_txBusyMask);
+    }
+    return r;
+}
+
+void RTL8188EUProbe::txCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes)
+{
+    RTL8188EUProbe *self = (RTL8188EUProbe *)owner; TxSlot *t = (TxSlot *)param;
+    OSIncrementAtomic((volatile SInt32 *)&self->_stTxCompleted);
+    if (status != kIOReturnSuccess) OSIncrementAtomic((volatile SInt32 *)&self->_stTxErrors);
+    void *cookie = t->cookie; t->cookie = nullptr;
+    OSBitAndAtomic(~(1u << (t - self->_tx)), &self->_txBusyMask);
+    if (self->_txDoneCb) self->_txDoneCb(self->_cbCtx, cookie, status);
+}
+
+// Parse one bulk IN buffer (rxdesc16, no aggregation); same layout as rxScan. Returns false if there is no 802.11 frame.
+bool RTL8188EUProbe::parseRx(const uint8_t *b, uint32_t got, RxInfo *out)
+{
+    out->frame = nullptr; out->len = 0; out->crcBad = false; out->c2h = false;
+    if (got < 24) return false;
+    const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12);
+    uint32_t pktLen = dw0 & 0x3fff, drv = ((dw0 >> 16) & 0xf) * 8, shift = (dw0 >> 24) & 3;
+    if (((dw3 >> 14) & 3) != 0) { out->c2h = true; return false; }
+    if (dw0 & (1u << 14)) { out->crcBad = true; return false; }
+    uint32_t off = 24 + drv + shift;
+    if (pktLen < 10 || off + pktLen > got) return false;
+    out->frame = b + off; out->len = pktLen;
+    return true;
+}
+
+void RTL8188EUProbe::rxCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes)
+{
+    RTL8188EUProbe *self = (RTL8188EUProbe *)owner; RxSlot *slot = (RxSlot *)param;
+    OSIncrementAtomic((volatile SInt32 *)&self->_stRxCompleted);
+    if (status == kIOReturnSuccess) {
+        self->_rxConsecErr = 0;
+        RxInfo ri;
+        OSIncrementAtomic((volatile SInt32 *)&self->_stRxBuffers);
+        if (self->parseRx((const uint8_t *)slot->buf->getBytesNoCopy(), bytes, &ri)) {
+            OSIncrementAtomic((volatile SInt32 *)&self->_stRxFrames);
+            if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
+        } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
+        else if (ri.c2h) OSIncrementAtomic((volatile SInt32 *)&self->_stRxC2h);
+    } else if (status != kIOReturnAborted) {
+        OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
+        self->_rxConsecErr++;
+    }
+    if (self->_rxRunning && status != kIOReturnAborted && self->_rxConsecErr < 16) {
+        IOUSBHostCompletion c = { self, &RTL8188EUProbe::rxCompleteTramp, slot };
+        if (self->_bulkIn->io(slot->buf, kRxBufLen, &c, 0) == kIOReturnSuccess) { OSIncrementAtomic((volatile SInt32 *)&self->_stRxSubmitted); return; }
+        OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
+    }
+    OSDecrementAtomic(&self->_rxOutstanding);
+}
+
+IOReturn RTL8188EUProbe::asyncStart()
+{
+    if (_asyncUp) return kIOReturnSuccess;
+    if (!_bulkIn) return kIOReturnNotReady;
+    for (int i = 0; i < kRxSlots; i++) {
+        _rx[i].buf = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionIn, kRxBufLen, 4);
+        if (!_rx[i].buf) { asyncStop(); return kIOReturnNoMemory; }
+    }
+    for (int i = 0; i < kTxSlots; i++) {
+        _tx[i].buf = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionOut, kTxBufLen, 4);
+        if (!_tx[i].buf) { asyncStop(); return kIOReturnNoMemory; }
+    }
+    _asyncUp = true;
+    return kIOReturnSuccess;
+}
+
+IOReturn RTL8188EUProbe::rxStart()
+{
+    if (!_asyncUp) return kIOReturnNotReady;
+    if (_rxRunning) return kIOReturnSuccess;
+    _rxRunning = 1; _rxConsecErr = 0;
+    for (int i = 0; i < kRxSlots; i++) {
+        IOUSBHostCompletion c = { this, &RTL8188EUProbe::rxCompleteTramp, &_rx[i] };
+        OSIncrementAtomic(&_rxOutstanding);
+        IOReturn r = _bulkIn->io(_rx[i].buf, kRxBufLen, &c, 0);
+        if (r != kIOReturnSuccess) { OSDecrementAtomic(&_rxOutstanding); if (i == 0) { _rxRunning = 0; return r; } }
+        else OSIncrementAtomic((volatile SInt32 *)&_stRxSubmitted);
+    }
+    return kIOReturnSuccess;
+}
+
+void RTL8188EUProbe::rxStop()
+{
+    if (!_rxRunning && _rxOutstanding == 0) return;
+    _rxRunning = 0;
+    if (_bulkIn) _bulkIn->abort();
+    for (int i = 0; i < 100 && _rxOutstanding > 0; i++) IOSleep(10);   // wait for aborted completions (max 1 s)
+    if (_rxOutstanding > 0) IOLog(LOGP "rx_stop: %d RX completion(s) still outstanding after 1 s\n", (int)_rxOutstanding);
+}
+
+void RTL8188EUProbe::asyncStop()
+{
+    rxStop();
+    for (int i = 0; i < 100 && _txBusyMask; i++) IOSleep(10);          // let TX completions drain
+    if (_txBusyMask) {
+        for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) _bulkOut[i]->abort();
+        for (int i = 0; i < 100 && _txBusyMask; i++) IOSleep(10);
+    }
+    _asyncUp = false;
+    for (int i = 0; i < kRxSlots; i++) if (_rx[i].buf) { _rx[i].buf->release(); _rx[i].buf = nullptr; }
+    for (int i = 0; i < kTxSlots; i++) if (_tx[i].buf) { _tx[i].buf->release(); _tx[i].buf = nullptr; }
+}
+
+// Probe-time test of the async engine: 2 s of RX on ch11, counting beacons of the AP seen earlier, then 5 async probe requests.
+struct AsyncTestCtx { volatile SInt32 beacons, probeResp, mgmt, txDone; };
+static void asyncTestRx(void *ctx, const uint8_t *f, uint32_t len)
+{
+    AsyncTestCtx *c = (AsyncTestCtx *)ctx;
+    if (len < 24) return;
+    uint8_t t = f[0] & 0xfc;
+    if (t == 0x80) OSIncrementAtomic(&c->beacons);
+    else if (t == 0x50) OSIncrementAtomic(&c->probeResp);
+    if ((f[0] & 0x0c) == 0) OSIncrementAtomic(&c->mgmt);
+}
+static void asyncTestTxDone(void *ctx, void *cookie, IOReturn st) { OSIncrementAtomic(&((AsyncTestCtx *)ctx)->txDone); }
+
+void RTL8188EUProbe::asyncSelfTest()
+{
+    AsyncTestCtx ctx = {};
+    IOReturn ra = asyncStart();
+    if (ra != kIOReturnSuccess) { IOLog(LOGP "async_selftest: asyncStart FAILED 0x%08x\n", ra); return; }
+    IOReturn rc = setChannel(11);
+    _cbCtx = &ctx; _rxCb = asyncTestRx; _txDoneCb = asyncTestTxDone;
+    _stRxSubmitted = _stRxCompleted = _stRxBuffers = _stRxFrames = _stRxCrcBad = _stRxC2h = _stRxErrors = 0;
+    _stTxSubmitted = _stTxCompleted = _stTxErrors = 0;
+    IOReturn rr = rxStart();
+    IOSleep(2000);
+    SInt32 passive = ctx.beacons;
+    // 5 async probe requests, broadcast wildcard, 200 ms apart, ch11 only (same IE set as rxScan)
+    uint8_t pr[64]; uint16_t n = 0;
+    pr[n++] = 0x40; pr[n++] = 0; pr[n++] = 0; pr[n++] = 0;
+    for (int i = 0; i < 6; i++) pr[n++] = 0xff;
+    for (int i = 0; i < 6; i++) pr[n++] = _efuse[kEfuseOffMac + i];
+    for (int i = 0; i < 6; i++) pr[n++] = 0xff;
+    uint16_t seqPos = n; n += 2;
+    pr[n++] = 0; pr[n++] = 0;
+    const uint8_t rates[] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
+    pr[n++] = 1; pr[n++] = sizeof(rates); memcpy(pr + n, rates, sizeof(rates)); n += sizeof(rates);
+    pr[n++] = 3; pr[n++] = 1; pr[n++] = 11;
+    IOReturn lastTx = kIOReturnSuccess;
+    for (int i = 0; i < 5; i++) {
+        uint16_t sq = (uint16_t)(100 + i);
+        pr[seqPos] = (uint8_t)((sq << 4) & 0xff); pr[seqPos + 1] = (uint8_t)((sq << 4) >> 8);
+        IOReturn tr = txSubmitMgmt(pr, n, sq, nullptr);
+        if (tr != kIOReturnSuccess) lastTx = tr;
+        IOSleep(200);
+    }
+    rxStop();
+    IOLog(LOGP "async_selftest: start=0x%x chan11=0x%x rx_start=0x%x | 2 s passive: beacons=%d (expect ~19 for one AP at 102 ms) | "
+          "rx submitted=%u completed=%u buffers=%u frames=%u crc_bad=%u c2h=%u errors=%u | "
+          "tx submitted=%u completed=%u errors=%u last_submit=0x%x | probe_resp=%d mgmt=%d tx_done_cb=%d\n",
+          ra, rc, rr, (int)passive, (unsigned)_stRxSubmitted, (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames,
+          (unsigned)_stRxCrcBad, (unsigned)_stRxC2h, (unsigned)_stRxErrors, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted,
+          (unsigned)_stTxErrors, lastTx, (int)ctx.probeResp, (int)ctx.mgmt, (int)ctx.txDone);
+    _rxCb = nullptr; _txDoneCb = nullptr; _cbCtx = nullptr;
 }
 
 
@@ -1376,6 +1564,7 @@ bool RTL8188EUProbe::start(IOService *provider)
                                                 IOReturn xr = rxScan();
                                                 IOLog(LOGP "rx_scan returned 0x%08x\n", xr);
                                                 linkSelfTest();
+                                                asyncSelfTest();
                                             }
                                         }
                                     }
@@ -1401,6 +1590,7 @@ bool RTL8188EUProbe::willTerminate(IOService *provider, IOOptionBits options)
 
 void RTL8188EUProbe::closeAll()
 {
+    asyncStop();
     if (_bulkIn) { _bulkIn->abort(); _bulkIn->release(); _bulkIn = nullptr; }
     for (uint32_t i = 0; i < _nBulkOut; i++) {
         if (_bulkOut[i]) { _bulkOut[i]->abort(); _bulkOut[i]->release(); _bulkOut[i] = nullptr; }

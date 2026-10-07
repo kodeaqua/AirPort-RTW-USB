@@ -127,3 +127,13 @@ set_basic_rates :4748, bss_info_changed ASSOC/PREAMBLE/SLOT/BSSID :4883, set_aif
 - `h2cCmd4()` = `rtl8xxxu_gen2_h2c_cmd` for <=4-byte commands (core.c:1000); `reportConnect()` = gen2_report_connect (core.c:4630), cmd 0x01, parm = connect | role AP(2)<<4, macid 0.
   `joinBss()`/`leaveBss()` now call it. Finding: on 8188eu rate adaptation is driver-side (`rtl8188e_update_rate_mask` only stores the mask into `ra_info`, 8188e.c:1780),
   so there is no rate-mask H2C to port; data frames need a driver-chosen rate in txdw5 (ra->decision_rate, default MCS7 per rtl8188e_ra_info_init_all).
+
+## 4d: async TX/RX engine (v0.13.0, written 2026-10-07, awaiting hardware test)
+Foundation for the frontend shim (WP1/WP2 of docs/stage4-plan.md). Probe-only, API shaped for later reuse:
+- `asyncStart/asyncStop`, `rxStart/rxStop` (4 x 4096-byte bulk IN buffers, resubmitted from the completion, abort+drain on stop),
+  `txSubmitMgmt(frame,len,seq,cookie)` (8-slot pool, `IOUSBHostPipe::io` with `IOUSBHostCompletion`), `parseRx()` (same rxdesc16 layout as rxScan).
+  Callbacks `RxCallback(ctx, frame, len)` / `TxDoneCallback(ctx, cookie, status)` run on the USB workloop.
+- Not ported yet: RSSI/phystats (`rtl8723au_rx_parse_phystats`, `rtl8188e_cck_rssi`), TX report C2H handling, data-frame TX descriptor (QoS/rate/key bits),
+  RX aggregation. RCR has APPEND_ICV/MIC set (0x7000600e); with hardware decryption the trailing ICV/MIC length handling is still to be checked.
+- `asyncSelfTest()` (after link_selftest): ch11, 2 s RX then 5 async probe requests. Expected single log line `async_selftest:` with
+  `beacons` ~19 for one AP at 102 ms interval, `rx completed >= submitted - 4`, `tx submitted=5 completed=5 errors=0`, `tx_done_cb=5`, `probe_resp>0` if the AP answers.
