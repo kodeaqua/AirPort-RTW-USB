@@ -43,6 +43,7 @@ static struct r8188eu_hw g_r8;
 static void *g_r8_core;
 
 void rtl8188eu_hw_set_core(void *core) { g_r8_core = core; }
+void rtl8188eu_hw_invalidate_init(void) { g_r8.hw_inited = false; }
 
 /* ------------------------------------------------------------------ */
 /*  RX: USB completion context -> queue -> worker -> frontend           */

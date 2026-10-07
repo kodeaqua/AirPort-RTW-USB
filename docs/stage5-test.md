@@ -43,3 +43,16 @@ Legacy rates only (no HT/40 MHz), fixed 6M data rate (GUESS), no RSSI/TX status,
   (scan, TX, bss_info, AWDL) -> interleaved RF/BB/RCR writes. Fixed in v0.15.5 (recursive `_lock`, `CoreLock`).
 - v0.15.5 also logs every channel change (first 40), prints `ch=` in `stats`, and on an RX stall dumps CR/SYS_FUNC_EN/RF18/BB800/BB900/BCN_CTRL/MSR
   (`rx_stall:` line) then re-applies the channel as a recovery experiment. Send back all `RTL8188EUProbe:` lines (`sudo dmesg`).
+
+## v0.18.0: diagnostics + sleep/wake + hot-unplug (patch 0003, NOT yet run on hardware)
+
+Changes: `rx DUPSEQ` / `tx ICMP` log lines (duplicate-reply diagnosis); `RTL8188EUCore::markGone()` (called from
+`AirPortRTW::willTerminate`, all later I/O returns NoDevice); wake in USB mode (`restoreAfterSystemWake`) runs
+`resumeCheck()` (clearStall on all pipes + SYS_CFG read) then forces the full init on the next `start()`.
+GUESS: whether the USB port loses power in S3 is unknown, so a full re-init is always done.
+
+Test A (hot-unplug): join WPA2, unplug the dongle. Expect `USB provider terminating (hot-unplug)` and `device gone`, no panic.
+Replug: the interface should reappear and join again. Send `sudo dmesg | grep -E "AirPortRTW|RTL8188EU" | tail -60`.
+Test B (sleep/wake): join WPA2, sleep 30 s, wake. Expect `resume check: SYS_CFG read -> 0x00000000 (0x24403735)`,
+`wake complete`, then CoreWiFi rejoins. If `PM transition ... failed` appears, send the lines around it.
+Test C (duplicates): `ping -c 30 8.8.8.8`, then `sudo dmesg | grep -E "rx DUPSEQ|tx ICMP"`.

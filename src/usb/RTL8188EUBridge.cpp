@@ -27,6 +27,9 @@ void rtl8188eu_core_destroy(void *core)
     C(core)->release();
 }
 
+void rtl8188eu_core_mark_gone(void *core) { if (core) C(core)->markGone(); }
+int  rtl8188eu_core_resume_check(void *core) { return core ? C(core)->resumeCheck() : kIOReturnNotReady; }
+
 int rtl8188eu_br_init_hw(void *core) { return C(core)->initHardware(); }
 
 void rtl8188eu_br_get_mac(void *core, uint8_t mac[6]) { C(core)->getMac(mac); }

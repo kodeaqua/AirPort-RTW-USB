@@ -160,6 +160,7 @@ struct CoreLock {
 IOReturn RTL8188EUCore::regRead(uint16_t addr, void *out, uint16_t len)
 {
     CoreLock lk(_lock);
+    if (_gone) return kIOReturnNoDevice;
     if (!_iface || !_ctlBuf || len > 4) return kIOReturnNotReady;
     StandardUSB::DeviceRequest req = {};
     req.bmRequestType = kRealtekUsbRead;
@@ -178,6 +179,7 @@ IOReturn RTL8188EUCore::regRead(uint16_t addr, void *out, uint16_t len)
 IOReturn RTL8188EUCore::regWrite(uint16_t addr, const void *in, uint16_t len)
 {
     CoreLock lk(_lock);
+    if (_gone) return kIOReturnNoDevice;
     if (!_iface || !_ctlBuf || len > 4) return kIOReturnNotReady;
     bcopy(in, _ctlBuf->getBytesNoCopy(), len);
     StandardUSB::DeviceRequest req = {};
@@ -357,6 +359,7 @@ IOReturn RTL8188EUCore::powerOn()
 // Port of rtl8xxxu_writeN: control writes of at most 196 bytes, wValue advancing per chunk.
 IOReturn RTL8188EUCore::regWriteN(uint16_t addr, const uint8_t *buf, uint32_t len)
 {
+    if (_gone) return kIOReturnNoDevice;
     CoreLock lk(_lock);
     if (!_iface || !_blkBuf) return kIOReturnNotReady;
     while (len) {
@@ -917,6 +920,7 @@ IOReturn RTL8188EUCore::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *fra
 // supplied by the caller (no rate adaptation yet). Port of rtl8xxxu_tx. Not hardware-tested for data frames.
 IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const rtl8188eu_tx::Params &p, void *cookie)
 {
+    if (_gone) return kIOReturnNoDevice;
     if (!_asyncUp) return kIOReturnNotReady;
     if (len < 24 || kTxDescSize + len > kTxBufLen) return kIOReturnBadArgument;
     int pipe = rtl8188eu_tx::pipeForQueue(p.queue, _nBulkOut);
@@ -928,6 +932,16 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
     if (idx < 0) return kIOReturnNoResources;
     TxSlot &t = _tx[idx];
     t.cookie = cookie;
+    // v0.18.0 diagnostic: log each ICMP data frame handed to the USB TX path (LLC/SNAP ethertype 0x0800, IP proto 1), to tell
+    // whether a duplicate echo request is submitted twice by the frontend.
+    if ((frame[0] & 0x0c) == 0x08) {
+        uint32_t hl = (frame[0] & 0x80) ? 26 : 24;
+        if (len >= hl + 8 + 10 && frame[hl + 6] == 0x08 && frame[hl + 7] == 0x00 && frame[hl + 8 + 9] == 1) {
+            static volatile SInt32 nIcmp;
+            SInt32 n = OSIncrementAtomic(&nIcmp);
+            if (n < 60) IOLog(LOGP "tx ICMP #%d: submit=%u seq=%d len=%u slot=%d busy=0x%x\n", (int)n, (unsigned)_stTxSubmitted, (int)p.seqOverride, len, idx, (unsigned)_txBusyMask);
+        }
+    }
     uint32_t total = rtl8188eu_tx::build((uint8_t *)t.buf->getBytesNoCopy(), frame, len, p);
     IOUSBHostCompletion c = { this, &RTL8188EUCore::txCompleteTramp, &t };
     OSIncrementAtomic((volatile SInt32 *)&_stTxSubmitted);
@@ -1065,6 +1079,17 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
                           ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], et, (int)ri.decrypted);
                 }
             }
+            // v0.18.0 diagnostic: ping showed DUP replies. Same 802.11 seq twice in a row on unicast data = the AP retransmitted
+            // (retry=1 expected) or we delivered one frame twice (retry=0). Logged separately from the capped "rx UC" lines.
+            if (ri.len >= 24 && (ri.frame[0] & 0x0c) == 0x08 && !(ri.frame[4] & 1)) {
+                static volatile SInt32 nDup; static uint16_t lastSeq = 0xffff;
+                uint16_t sq = (uint16_t)((ri.frame[22] | ri.frame[23] << 8) >> 4);
+                if (sq == lastSeq) {
+                    SInt32 n = OSIncrementAtomic(&nDup);
+                    if (n < 50) IOLog(LOGP "rx DUPSEQ #%d: seq=%u retry=%d len=%u dec=%d\n", (int)n, sq, (ri.frame[1] >> 3) & 1, ri.len, (int)ri.decrypted);
+                }
+                lastSeq = sq;
+            }
             if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted, ri.hasSignal, ri.signal);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
@@ -1073,7 +1098,7 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
         self->_rxConsecErr++;
     }
-    if (self->_rxRunning && status != kIOReturnAborted && self->_rxConsecErr < 16) {
+    if (self->_rxRunning && !self->_gone && status != kIOReturnAborted && self->_rxConsecErr < 16) {
         IOUSBHostCompletion c = { self, &RTL8188EUCore::rxCompleteTramp, slot };
         if (self->_bulkIn->io(slot->buf, kRxBufLen, &c, 0) == kIOReturnSuccess) { OSIncrementAtomic((volatile SInt32 *)&self->_stRxSubmitted); return; }
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
@@ -1081,8 +1106,32 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
     OSDecrementAtomic(&self->_rxOutstanding);
 }
 
+// Hot-unplug (called from AirPortRTW::willTerminate). Abort is thread-safe; teardown itself still happens in stop().
+void RTL8188EUCore::markGone()
+{
+    OSIncrementAtomic((volatile SInt32 *)&_gone);
+    _rxRunning = 0;
+    if (_bulkIn) _bulkIn->abort();
+    for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) _bulkOut[i]->abort();
+    IOLog(LOGP "device gone: I/O disabled\n");
+}
+
+// System wake. GUESS: the port may or may not have lost power during sleep, so do not assume either: clear halts on all
+// pipes, then require a register read to succeed. The caller re-runs the full init chain afterwards (hw_inited reset).
+IOReturn RTL8188EUCore::resumeCheck()
+{
+    if (_gone) return kIOReturnNoDevice;
+    if (_bulkIn) (void)_bulkIn->clearStall(true);
+    for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) (void)_bulkOut[i]->clearStall(true);
+    uint32_t v = 0;
+    IOReturn r = regRead(kRegSysCfg, &v, sizeof(v));
+    IOLog(LOGP "resume check: SYS_CFG read -> 0x%08x (0x%08x)\n", r, v);
+    return r;
+}
+
 IOReturn RTL8188EUCore::asyncStart()
 {
+    if (_gone) return kIOReturnNoDevice;
     if (_asyncUp) return kIOReturnSuccess;
     if (!_bulkIn) return kIOReturnNotReady;
     for (int i = 0; i < kRxSlots; i++) {

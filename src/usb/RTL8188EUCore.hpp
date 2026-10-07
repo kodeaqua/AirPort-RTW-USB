@@ -106,6 +106,8 @@ public:
     static void rxCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
     static void txCompleteTramp(void *owner, void *param, IOReturn status, uint32_t bytes);
     IOReturn asyncStart();      // allocate buffers
+    void     markGone();        // hot-unplug: fail all further I/O fast (NoDevice), abort pipes; safe from any thread
+    IOReturn resumeCheck();     // after system wake: clear pipe stalls, check the dongle still answers register reads
     void     asyncStop();       // stop RX, drain TX, free buffers
     IOReturn rxStart();
     void     rxStop();
@@ -128,6 +130,7 @@ public:
     IOBufferMemoryDescriptor *_ctlBuf = nullptr;
     IOBufferMemoryDescriptor *_blkBuf = nullptr;   // 196 bytes, writeN chunk
     bool                      _open   = false;
+    volatile SInt32           _gone   = 0;          // set by markGone() once the device is terminating
     uint8_t                   _nextMbox = 0;
     bool                      _asyncUp = false;
     RxSlot                    _rx[4] = {};
