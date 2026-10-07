@@ -77,7 +77,7 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
 - Register access (rtl8xxxu): ctrl req 0x05, type 0xC0 read / 0x40 write, wValue=addr, wIndex=0, 500 ms.
   `REG_SYS_CFG`=0xF0, cut=(v&0xF000)>>12, cut letter = 'A'+cut, cut 8 (I) rejected.
 - Linux order: identify_chip -> read_efuse -> parse_efuse -> (later) power_on/firmware. Efuse is read BEFORE power_on.
-- Logs: use `/usr/bin/log show` (zsh shadows `log`); `dmesg` shows nothing. `make airport` runs inside `AirPort-RTW/`.
+- Logs: use `/usr/bin/log show` (zsh shadows `log`); kext `IOLog` does NOT reach `log show` (unified log); read it with `sudo dmesg` right after boot (small buffer: avoid per-call log spam). `make airport` runs inside `AirPort-RTW/`.
 
 ## Working conventions
 

@@ -815,7 +815,8 @@ IOReturn RTL8188EUCore::setTxPower(int channel, bool ht40)
     uint8_t mcsbase = ofdmbase;                                 // + ht{20,40}_tx_power_diff[0].a == 0
     (void)ht40;
     uint32_t ofdm = ofdmbase * 0x01010101u, mcs = mcsbase * 0x01010101u;
-    IOLog(LOGP "set_tx_power ch%d: cck=0x%02x ofdm/mcs=0x%02x (efuse)\n", channel, cck, ofdmbase);
+    static int s_txpLogged;   // v0.15.2: log only the first calls; every scan hop used to flood the kernel log buffer
+    if (s_txpLogged < 14) { s_txpLogged++; IOLog(LOGP "set_tx_power ch%d: cck=0x%02x ofdm/mcs=0x%02x (efuse)\n", channel, cck, ofdmbase); }
 
     if ((r = read32(kRegTxAgcACck1Mcs32, &v32)) != kIOReturnSuccess) return r;
     v32 = (v32 & 0xffff00ff) | ((uint32_t)cck << 8);
