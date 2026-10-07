@@ -1,6 +1,6 @@
 # Stage 5 test: AirPortRTW with the RTL8188EU USB path (first integrated boot)
 
-Status 2026-10-07: builds and links (`make airport-usb`); never run. Expect the first integrated boot to fail somewhere; one log tells which layer.
+Status 2026-10-08: integrated kext loads; WPA2 join, DHCP and ping work on hardware (v0.17.0). Sleep/wake, hot-unplug and rate adaptation (v0.18.0-v0.20.0) are built but not yet tested on hardware. See the sections below.
 
 ## What it is
 One kext (`AirPortRTW`) that now also matches `IOUSBHostInterface` 0bda:8179 (personality `AirPortRTW_8188EU_USB`). With a USB provider it:
@@ -24,15 +24,15 @@ whose ops call the core. No PCI/MMIO/IRQ is touched (`_isUsb`). Patches: `patche
    `core ops probe (RTL8188EU/USB)`, `IEEE80211::start complete - SUCCESS`, `controller and network interface registered`.
 3. A Wi-Fi interface appears (System Settings > Network / menu bar); scan lists "Rumah 4G" (ch11, WPA2 CCMP expected).
 4. Join WPA2 + ping. TKIP/WEP networks cannot be joined (set_key returns -EOPNOTSUPP).
-5. Later: sleep/wake, unplug/replug (not handled yet: no hot-unplug path in AirPortRTW; unplug while loaded is untested).
+5. sleep/wake, unplug/replug: handled since v0.18.0 (patch 0003), see the v0.18.0 section below.
 
 ## If it fails, send back
 `log show` output above (whole `AirPortRTW` + `kernel` lines for 2 minutes), `kmutil showloaded | grep -iE "rtw|8188"`, and any panic report
 from /Library/Logs/DiagnosticReports/. Stage markers `rtw88: ... RTW88_STAGE` show how far `IEEE80211::start()` got.
 
 ## Known gaps (by design in this slice)
-Legacy rates only (no HT/40 MHz), fixed 6M data rate (GUESS), no RSSI/TX status, efuse MAC only, TKIP/WEP unsupported, sleep/wake and hot-unplug not adapted
-(PM paths still assume PCI: wake returns NotReady for USB), RX handles one packet per USB buffer.
+Legacy rates only (no HT/40 MHz), efuse MAC only, TKIP/WEP unsupported, RX handles one packet per USB buffer.
+(Originally also: fixed 6M data rate, no RSSI, PCI-only PM paths; addressed in v0.17.0-v0.20.0, see below.)
 
 ## Run 1 findings (2026-10-07, v0.15.4, `rtw-full.txt`)
 - Integrated kext loads, `en1` (AirPortRTWInterface) exists; RTL8188EUProbe was NOT loaded (the `RTL8188EUProbe:` log prefix is the core's `LOGP`).
