@@ -120,6 +120,7 @@ public:
     IOReturn efuseReadAll();
     void     logEfuse();
 
+    IORecursiveLock          *_lock   = nullptr;   // serializes register/config access (see CoreLock)
     IOUSBHostInterface       *_iface  = nullptr;
     IOUSBHostPipe            *_bulkIn = nullptr;
     IOUSBHostPipe            *_bulkOut[4] = {};
@@ -134,6 +135,8 @@ public:
     volatile SInt32           _rxOutstanding = 0, _rxRunning = 0, _rxConsecErr = 0;
     volatile UInt32           _txBusyMask = 0;
     volatile UInt32           _txDumpPending = 0;
+    int                       _curChannel = 0;      // last channel programmed by setChannel (0 = none yet)
+    volatile UInt32           _chanSets = 0, _statLastFrames = 0;
     volatile UInt32           _stRxSubmitted = 0, _stRxCompleted = 0, _stRxBuffers = 0, _stRxFrames = 0, _stRxCrcBad = 0,
                               _stRxC2h = 0, _stRxErrors = 0, _stTxSubmitted = 0, _stTxCompleted = 0, _stTxErrors = 0;
     RxCallback                _rxCb = nullptr;

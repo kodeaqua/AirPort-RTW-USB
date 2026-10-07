@@ -148,8 +148,18 @@ enum {
     kCipherCcmpLow = 0x4,            // WLAN_CIPHER_SUITE_CCMP 00-0F-AC:4 & 0x0f (cam_write "hack")
 };
 
+// All register access shares one control buffer (_ctlBuf), and config sequences (RF write, channel, CAM, H2C mailbox) are
+// multi-step read-modify-writes. The frontend calls in from several threads (scan, TX, bss_info, AWDL), so serialize them.
+// Recursive so config entry points can call the register accessors. Never taken from USB completion context.
+struct CoreLock {
+    IORecursiveLock *l;
+    explicit CoreLock(IORecursiveLock *lock) : l(lock) { if (l) IORecursiveLockLock(l); }
+    ~CoreLock() { if (l) IORecursiveLockUnlock(l); }
+};
+
 IOReturn RTL8188EUCore::regRead(uint16_t addr, void *out, uint16_t len)
 {
+    CoreLock lk(_lock);
     if (!_iface || !_ctlBuf || len > 4) return kIOReturnNotReady;
     StandardUSB::DeviceRequest req = {};
     req.bmRequestType = kRealtekUsbRead;
@@ -167,6 +177,7 @@ IOReturn RTL8188EUCore::regRead(uint16_t addr, void *out, uint16_t len)
 
 IOReturn RTL8188EUCore::regWrite(uint16_t addr, const void *in, uint16_t len)
 {
+    CoreLock lk(_lock);
     if (!_iface || !_ctlBuf || len > 4) return kIOReturnNotReady;
     bcopy(in, _ctlBuf->getBytesNoCopy(), len);
     StandardUSB::DeviceRequest req = {};
@@ -346,6 +357,7 @@ IOReturn RTL8188EUCore::powerOn()
 // Port of rtl8xxxu_writeN: control writes of at most 196 bytes, wValue advancing per chunk.
 IOReturn RTL8188EUCore::regWriteN(uint16_t addr, const uint8_t *buf, uint32_t len)
 {
+    CoreLock lk(_lock);
     if (!_iface || !_blkBuf) return kIOReturnNotReady;
     while (len) {
         uint32_t n = len > kWriteNBlock ? kWriteNBlock : len;
@@ -503,7 +515,9 @@ IOReturn RTL8188EUCore::loadFirmware()
 
 bool RTL8188EUCore::init()
 {
-    return super::init();
+    if (!super::init()) return false;
+    _lock = IORecursiveLockAlloc();
+    return _lock != nullptr;
 }
 
 // Port of rtl8xxxu_init_mac (core.c:2187), RTL8188E branch: 8-bit writes of rtl8188e_mac_init_table
@@ -526,6 +540,7 @@ IOReturn RTL8188EUCore::initMac()
 // Port of rtl8xxxu_read_rfreg for RF_A (core.c:867). Same write/delay sequence as Linux.
 IOReturn RTL8188EUCore::rfRead(uint8_t reg, uint32_t *out)
 {
+    CoreLock lk(_lock);
     IOReturn r; uint32_t hssia, v;
     if ((r = read32(kRegFpgaXaHssiParm2, &hssia)) != kIOReturnSuccess) return r;
     v = hssia;                                   // path A: val32 = hssia
@@ -549,6 +564,7 @@ IOReturn RTL8188EUCore::rfRead(uint8_t reg, uint32_t *out)
 // Port of rtl8xxxu_write_rfreg for RF_A (core.c:912); the RTL8192E power-save quirk does not apply.
 IOReturn RTL8188EUCore::rfWrite(uint8_t reg, uint32_t data)
 {
+    CoreLock lk(_lock);
     data &= kLssiParmDataMask;
     IOReturn r = write32(kRegFpgaXaLssiParm, ((uint32_t)reg << kLssiParmAddrShift) | data);
     IODelay(1);
@@ -807,6 +823,7 @@ IOReturn RTL8188EUCore::initWmac()
 // only fills cck_base and ht40_base, so all the *_diff terms stay 0 (priv is zeroed). Channel 1 -> group 0, cck_group 0.
 IOReturn RTL8188EUCore::setTxPower(int channel, bool ht40)
 {
+    CoreLock lk(_lock);
     IOReturn r; uint32_t v32;
     int group = channel < 3 ? 0 : channel < 6 ? 1 : channel < 9 ? 2 : channel < 12 ? 3 : 4;
     int cckGroup = (channel == 14) ? 5 : group;
@@ -837,6 +854,7 @@ IOReturn RTL8188EUCore::setTxPower(int channel, bool ht40)
 // Unlike gen1/gen2 it does not touch SIFS/ANALOG2. rf_paths == 1 for 8188EU, so only path A.
 IOReturn RTL8188EUCore::setChannel(int channel)
 {
+    CoreLock lk(_lock);
     IOReturn r; uint8_t opmode; uint32_t v32;
     if (channel < 1 || channel > 14) return kIOReturnBadArgument;
     if ((r = setTxPower(channel, false)) != kIOReturnSuccess) return r;   // Linux order: set_tx_power, then config_channel (core.c:6838-6840)
@@ -852,6 +870,9 @@ IOReturn RTL8188EUCore::setChannel(int channel)
     if ((r = rfRead(kRf6052RegModeAg, &v32)) != kIOReturnSuccess) return r;
     v32 = (v32 & ~kRf6052ModeAgBwMask) | kRf6052ModeAgBw20Mhz8723b;
     if ((r = rfWrite(kRf6052RegModeAg, v32)) != kIOReturnSuccess) return r;
+    if (_curChannel != channel && _chanSets < 40)   // v0.15.5: which channels does the frontend actually program, and when?
+        IOLog(LOGP "set_channel %d -> %d (#%u)\n", _curChannel, channel, (unsigned)_chanSets);
+    _curChannel = channel; _chanSets++;
     return kIOReturnSuccess;
 }
 
@@ -922,11 +943,34 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
         read8(kRegTxpause, &pz); read16(0x0100, &cr);
         IOLog(LOGP "tx_wedge: RQPN=0x%08x RQPN_NPQ=0x%08x TXDMA_OFFSET_CHK=0x%08x 0x210=0x%08x TXPAUSE=0x%02x CR=0x%04x busy=0x%x nOut=%u\n",
               rq, nq, ck, ds, pz, cr, (unsigned)_txBusyMask, _nBulkOut);
-        for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) _bulkOut[i]->abort();
+        for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) {
+            _bulkOut[i]->abort();
+            IOReturn cs = _bulkOut[i]->clearStall(true);   // v0.15.4: GUESS: ep stall is why bulk OUT times out; log whether clearing works
+            IOLog(LOGP "tx_wedge: clearStall pipe %u -> 0x%08x\n", i, cs);
+        }
+    }
+    if ((_stTxSubmitted & 0xff) == 0) {
+        uint32_t rcr = 0, bss0 = 0; uint8_t msr = 0;   // v0.15.4: RX stuck at frames=74 with only C2H arriving: is the RX filter state sane?
+        read32(kRegRcr, &rcr); read8(kRegMsr, &msr); read32(kRegBssid, &bss0);
+        IOLog(LOGP "rxdiag: RCR=0x%08x MSR=0x%02x BSSID[0:3]=0x%08x\n", rcr, msr, bss0);
+    }
+    if ((_stTxSubmitted & 0xff) == 0) {
+        // v0.15.5: RX stall monitor. No 802.11 frame since the last window while TX goes on: dump PHY/MAC state once per
+        // window, then re-apply the current channel (RF 0x18 + tx power) as a recovery experiment and log whether RX resumes.
+        uint32_t fr = _stRxFrames;
+        if (fr == _statLastFrames && _stRxBuffers > 0) {
+            uint16_t cr = 0, sfe = 0; uint32_t rf18 = 0, bb800 = 0, bb804 = 0; uint8_t bcn = 0, msr = 0;
+            read16(0x0100, &cr); read16(0x0002, &sfe); rfRead(kRf6052RegModeAg, &rf18);
+            read32(kRegFpga0RfMode, &bb800); read32(kRegFpga1RfMode, &bb804); read8(kRegBeaconCtrl, &bcn); read8(kRegMsr, &msr);
+            IOReturn rc = setChannel(_curChannel > 0 ? _curChannel : 11);
+            IOLog(LOGP "rx_stall: ch=%d sets=%u CR=0x%04x SYS_FUNC_EN=0x%04x RF18=0x%05x BB800=0x%08x BB900=0x%08x BCN_CTRL=0x%02x MSR=0x%02x; reapplied channel -> 0x%08x\n",
+                  _curChannel, (unsigned)_chanSets, cr, sfe, rf18, bb800, bb804, bcn, msr, rc);
+        }
+        _statLastFrames = fr;
     }
     if ((_stTxSubmitted & 0xff) == 0)
-        IOLog(LOGP "stats: tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u crc=%u c2h=%u err=%u\n",
-              (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
+        IOLog(LOGP "stats: ch=%d tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u crc=%u c2h=%u err=%u\n",
+              _curChannel, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
               (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames, (unsigned)_stRxCrcBad,
               (unsigned)_stRxC2h, (unsigned)_stRxErrors);
     IOReturn r = _bulkOut[pipe]->io(t.buf, total, &c, 1000);
@@ -1166,6 +1210,7 @@ void RTL8188EUCore::asyncSelfTest()
 // rtl8xxxu_set_linktype, port 0 (core.c:1589).
 IOReturn RTL8188EUCore::setLinkType(uint8_t type)
 {
+    CoreLock lk(_lock);
     uint8_t v; IOReturn r = read8(kRegMsr, &v);
     if (r != kIOReturnSuccess) return r;
     return write8(kRegMsr, (uint8_t)((v & 0x0c) | (type & kMsrLinkMask)));
@@ -1174,6 +1219,7 @@ IOReturn RTL8188EUCore::setLinkType(uint8_t type)
 // rtl8xxxu_set_bssid, port 0 (core.c:3581).
 IOReturn RTL8188EUCore::setBssid(const uint8_t *bssid)
 {
+    CoreLock lk(_lock);
     IOReturn r;
     for (int i = 0; i < 6; i++)
         if ((r = write8(kRegBssid + i, bssid[i])) != kIOReturnSuccess) return r;
@@ -1194,6 +1240,7 @@ IOReturn RTL8188EUCore::stopTxBeacon()
 // STATION case of rtl8xxxu_add_interface (core.c:6746-6756, 6791-6793): beacon block, link type, MAC.
 IOReturn RTL8188EUCore::addStationInterface()
 {
+    CoreLock lk(_lock);
     IOReturn r; uint8_t v;
     if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
     if ((r = read8(kRegBeaconCtrl, &v)) != kIOReturnSuccess) return r;
@@ -1205,6 +1252,7 @@ IOReturn RTL8188EUCore::addStationInterface()
 // rtl8xxxu_set_basic_rates, 2.4 GHz (core.c:4748). rate_cfg is a bitmap in rtl rate order (bit0 = 1M ... bit11 = 54M).
 IOReturn RTL8188EUCore::setBasicRates(uint32_t rateCfg)
 {
+    CoreLock lk(_lock);
     uint32_t v; IOReturn r;
     rateCfg &= kResponseRateBitmapAll;
     if ((r = read32(kRegResponseRateSet, &v)) != kIOReturnSuccess) return r;
@@ -1218,6 +1266,7 @@ IOReturn RTL8188EUCore::setBasicRates(uint32_t rateCfg)
 // BSS_CHANGED_ERP_PREAMBLE (core.c:4968).
 IOReturn RTL8188EUCore::setShortPreamble(bool on)
 {
+    CoreLock lk(_lock);
     uint32_t v; IOReturn r = read32(kRegResponseRateSet, &v);
     if (r != kIOReturnSuccess) return r;
     return write32(kRegResponseRateSet, on ? (v | kRsrAckShortPreamble) : (v & ~kRsrAckShortPreamble));
@@ -1226,6 +1275,7 @@ IOReturn RTL8188EUCore::setShortPreamble(bool on)
 // BSS_CHANGED_ERP_SLOT + rtl8xxxu_set_aifs (core.c:4979, 4801). sifs = 16 if the peer is 11n on 2.4 GHz else 10.
 IOReturn RTL8188EUCore::setSlot(bool shortSlot, bool peerHt)
 {
+    CoreLock lk(_lock);
     const uint8_t slot = shortSlot ? 9 : 20, sifs = peerHt ? 16 : 10;
     IOReturn r = write8(kRegSlot, slot);
     if (r != kIOReturnSuccess) return r;
@@ -1244,6 +1294,7 @@ IOReturn RTL8188EUCore::setSlot(bool shortSlot, bool peerHt)
 // BSS_CHANGED_ASSOC, "joinbss sequence" without the H2C parts (core.c:4930-4955).
 IOReturn RTL8188EUCore::joinBss(uint16_t aid)
 {
+    CoreLock lk(_lock);
     IOReturn r;
     if ((r = write8(kRegBcnMaxErr, 0xff)) != kIOReturnSuccess) return r;
     if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
@@ -1254,6 +1305,7 @@ IOReturn RTL8188EUCore::joinBss(uint16_t aid)
 // BSS_CHANGED_ASSOC, disassociated branch (core.c:4957).
 IOReturn RTL8188EUCore::leaveBss()
 {
+    CoreLock lk(_lock);
     uint8_t v; IOReturn r = read8(kRegBeaconCtrl, &v);
     if (r != kIOReturnSuccess) return r;
     if ((r = write8(kRegBeaconCtrl, v | kBeaconDisableTsfUpdate)) != kIOReturnSuccess) return r;
@@ -1264,6 +1316,7 @@ IOReturn RTL8188EUCore::leaveBss()
 // Returns the CAM index used in *hwIdx. key16 is the 128-bit TK. Pairwise: mac = peer address; group: mac = BSSID.
 IOReturn RTL8188EUCore::setKeyCcmp(uint8_t keyidx, bool pairwise, const uint8_t *mac, const uint8_t *key16, uint8_t *hwIdx)
 {
+    CoreLock lk(_lock);
     if (keyidx > 3) return kIOReturnUnsupported;
     IOReturn r; uint16_t cr; uint8_t i0 = 0xff;
     for (uint8_t i = 0; i < kMaxSecCam; i++) if (!(_camMap & (1u << i))) { i0 = i; break; }
@@ -1295,6 +1348,7 @@ IOReturn RTL8188EUCore::setKeyCcmp(uint8_t keyidx, bool pairwise, const uint8_t 
 // rtl8xxxu_set_key DISABLE_KEY (core.c:7043).
 IOReturn RTL8188EUCore::clearKey(uint8_t hwIdx)
 {
+    CoreLock lk(_lock);
     if (hwIdx >= kMaxSecCam) return kIOReturnBadArgument;
     IOReturn r = write32(kRegCamWrite, 0);
     if (r != kIOReturnSuccess) return r;
@@ -1340,6 +1394,7 @@ void RTL8188EUCore::linkSelfTest()
 // Linux's wait loop (`while (retry--)` then `if (!retry)`) cannot detect a timeout; this one does.
 IOReturn RTL8188EUCore::h2cCmd4(uint32_t data)
 {
+    CoreLock lk(_lock);
     const uint8_t mbox = _nextMbox;
     uint8_t v = 0; bool ready = false;
     for (int retry = 0; retry < 100; retry++) {
@@ -1359,6 +1414,7 @@ IOReturn RTL8188EUCore::h2cCmd4(uint32_t data)
 // Linux passes macid 0, role AP (we are the station, the peer is the AP).
 IOReturn RTL8188EUCore::reportConnect(uint8_t macid, bool connect)
 {
+    CoreLock lk(_lock);
     const uint8_t parm = (connect ? 1 : 0) | ((kH2cRoleAp << 4) & 0xf0);
     return h2cCmd4(kH2cMediaStatusRpt | ((uint32_t)parm << 8) | ((uint32_t)macid << 16));   // macid_end byte = 0
 }
@@ -1706,5 +1762,6 @@ void RTL8188EUCore::closeAll()
 void RTL8188EUCore::free()
 {
     closeAll();
+    if (_lock) { IORecursiveLockFree(_lock); _lock = nullptr; }
     super::free();
 }

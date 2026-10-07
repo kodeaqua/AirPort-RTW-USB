@@ -33,3 +33,13 @@ from /Library/Logs/DiagnosticReports/. Stage markers `rtw88: ... RTW88_STAGE` sh
 ## Known gaps (by design in this slice)
 Legacy rates only (no HT/40 MHz), fixed 6M data rate (GUESS), no RSSI/TX status, efuse MAC only, TKIP/WEP unsupported, sleep/wake and hot-unplug not adapted
 (PM paths still assume PCI: wake returns NotReady for USB), RX handles one packet per USB buffer.
+
+## Run 1 findings (2026-10-07, v0.15.4, `rtw-full.txt`)
+- Integrated kext loads, `en1` (AirPortRTWInterface) exists; RTL8188EUProbe was NOT loaded (the `RTL8188EUProbe:` log prefix is the core's `LOGP`).
+- TX healthy: 2560 submissions, 1 in flight, err=0 (no bulk OUT timeout, `tx_wedge` never fired).
+- RX 802.11 frames stop after ~200 s (frames flat at 416) while only C2H keeps arriving; RCR/MSR unchanged, BSSID still 0, `visible=0`.
+  Scans hop through ch11 meanwhile, so the radio is deaf, not merely parked on an empty channel.
+- Audit finding: all register access shared one control buffer with no lock while the frontend calls in from several threads
+  (scan, TX, bss_info, AWDL) -> interleaved RF/BB/RCR writes. Fixed in v0.15.5 (recursive `_lock`, `CoreLock`).
+- v0.15.5 also logs every channel change (first 40), prints `ch=` in `stats`, and on an RX stall dumps CR/SYS_FUNC_EN/RF18/BB800/BB900/BCN_CTRL/MSR
+  (`rx_stall:` line) then re-applies the channel as a recovery experiment. Send back all `RTL8188EUProbe:` lines (`sudo dmesg`).
