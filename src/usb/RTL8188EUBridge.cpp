@@ -28,6 +28,7 @@ void rtl8188eu_core_destroy(void *core)
 }
 
 void rtl8188eu_core_mark_gone(void *core) { if (core) C(core)->markGone(); }
+void rtl8188eu_core_release_provider(void *core) { if (core) C(core)->releaseProvider(); }
 int  rtl8188eu_core_resume_check(void *core) { return core ? C(core)->resumeCheck() : kIOReturnNotReady; }
 
 void rtl8188eu_br_set_peer(void *core, uint32_t supp, uint8_t ht_mcs0, bool ht) { C(core)->setPeer(supp, ht_mcs0, ht); }

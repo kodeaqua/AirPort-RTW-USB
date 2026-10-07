@@ -24,6 +24,7 @@ void *rtl8188eu_core_create(void *owner, void *provider);   /* alloc + attach (o
 void  rtl8188eu_core_destroy(void *core);                   /* closeAll + release; idempotent per core */
 
 /* Provider -> face: which core the next rtw88_core_ops.probe() should drive (set before IEEE80211::start()). */
+void  rtl8188eu_core_release_provider(void *core);       /* didTerminate: close the interface so termination can complete */
 void  rtl8188eu_core_mark_gone(void *core);               /* hot-unplug: fail all further I/O immediately */
 int   rtl8188eu_core_resume_check(void *core);            /* wake: clear pipe halts, verify register reads work */
 void  rtl8188eu_hw_invalidate_init(void);                /* wake: next ops start() re-runs the full hardware init */

@@ -112,6 +112,7 @@ public:
     void     setPeer(uint32_t suppRates, uint8_t htMcs0, bool ht);   // station added (rates/HT of the AP); restarts RA
     void     clearPeer();   // unicast data rate from smoothed RSSI (no TX-report RA yet)
     void     markGone();        // hot-unplug: fail all further I/O fast (NoDevice), abort pipes; safe from any thread
+    void     releaseProvider(); // didTerminate: close() the interface (keeps the objects) so IOKit can finish terminating
     IOReturn resumeCheck();     // after system wake: clear pipe stalls, check the dongle still answers register reads
     void     asyncStop();       // stop RX, drain TX, free buffers
     IOReturn rxStart();

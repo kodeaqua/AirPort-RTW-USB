@@ -1231,6 +1231,14 @@ void RTL8188EUCore::markGone()
     IOLog(LOGP "device gone: I/O disabled\n");
 }
 
+// Called from didTerminate(). IOService::didTerminate defers while the client still has the provider open, so stop() would never
+// run (and the next start() would hit a stale instance). Only close the interface here; pipes/buffers are freed later in closeAll().
+void RTL8188EUCore::releaseProvider()
+{
+    markGone();
+    if (_iface && _open) { _iface->close(_owner); _open = false; IOLog(LOGP "interface closed (provider terminating)\n"); }
+}
+
 // System wake. GUESS: the port may or may not have lost power during sleep, so do not assume either: clear halts on all
 // pipes, then require a register read to succeed. The caller re-runs the full init chain afterwards (hw_inited reset).
 IOReturn RTL8188EUCore::resumeCheck()

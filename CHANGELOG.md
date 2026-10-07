@@ -2,6 +2,10 @@
 
 Versions are the standalone probe/core version (`RTL8188EUCore`). "HW" = verified on the author's dongle (0bda:8179, cut D).
 
+## Unreleased (not yet run on hardware)
+
+- fix: after sleep/wake the dongle re-enumerates; the old driver instance never finished terminating (`inactive, busy 1`, `busy timeout ... AirPortRTW, IOUSBHostInterface`) because the USB interface stayed open, so the next `start()` failed with `compat initialization failed` and replug did not help. `didTerminate` now closes the interface (patch 0003, `releaseProvider`). Added `stop`/`teardown`/`didTerminate` logs.
+
 ## 0.21.0 (not yet run on hardware)
 - HT20 (11n, 1 stream, MCS0-7, long GI) advertised to the frontend; AP rate set and HT MCS mask feed the rate adaptation through
   a port of `rtl8xxxu_refresh_rate_mask` (mask by signal level, re-evaluated every 2 s). EAPOL frames always go out at 6M.

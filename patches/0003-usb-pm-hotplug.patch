@@ -1,6 +1,14 @@
 --- a/src/kext/AirPortRTW.cpp
 +++ b/src/kext/AirPortRTW.cpp
-@@ -760,6 +760,25 @@
+@@ -592,6 +592,7 @@
+ 
+ void AirPortRTW::teardown()
+ {
++    IOLog("AirPortRTW: teardown\n");
+     __atomic_store_n(&_shutdown, true, __ATOMIC_RELEASE);
+     if (_diagnosticsTimer) {
+         /* A callback already running may re-arm after the first cancel;
+@@ -760,6 +761,25 @@
      setProperty("PM_WAKE_COUNT", (uint64_t)_pmWakeCount, 32);
  
      IOReturn ret = kIOReturnSuccess;
@@ -26,7 +34,7 @@
      if (!_pciDev || !_ieee80211 || !_mmioMap || !_mmioBase) {
          ret = kIOReturnNotReady;
          goto out;
-@@ -877,6 +896,20 @@
+@@ -877,10 +897,38 @@
          IOLog("AirPortRTW: PM transition to state %lu failed 0x%x\n",
                powerStateOrdinal, ret);
      return IOPMAckImplied;
@@ -46,14 +54,33 @@
 +    return super::willTerminate(provider, options);
  }
  
++bool AirPortRTW::didTerminate(IOService *provider, IOOptionBits options, bool *defer)
++{
++#ifdef RTW_USB
++    /* The default implementation defers while we still have the provider open, so stop() never ran after a USB re-enumeration
++     * (observed after sleep/wake: old instance stuck "inactive, busy 1", new start() failed with -EBUSY). Close it here. */
++    if (_isUsb && _usbCore) {
++        IOLog("AirPortRTW: didTerminate: closing USB provider\n");
++        rtl8188eu_core_release_provider(_usbCore);
++    }
++#endif
++    return super::didTerminate(provider, options, defer);
++}
++
  void AirPortRTW::stop(IOService *provider)
+ {
++    IOLog("AirPortRTW: stop\n");
+     /* The reference IO80211 driver calls IO80211Controller::stop() before releasing its
+      * workloop/HAL/interface state. Keep the same ordering here so superclass
+      * teardown cannot observe a freed IO80211WorkLoop or Realtek backend. */
 --- a/src/kext/AirPortRTW.hpp
 +++ b/src/kext/AirPortRTW.hpp
-@@ -112,6 +112,7 @@
+@@ -112,6 +112,8 @@
      void     stop(IOService *provider) override;
      void     free() override;
      void     systemWillShutdown(IOOptionBits specifier) override;
 +    bool     willTerminate(IOService *provider, IOOptionBits options) override;
++    bool     didTerminate(IOService *provider, IOOptionBits options, bool *defer) override;
      IOReturn setPowerState(unsigned long powerStateOrdinal, IOService *whatDevice) override;
      IOReturn registerWithPolicyMaker(IOService *policyMaker) override;
  
