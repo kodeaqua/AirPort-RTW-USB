@@ -1,4 +1,4 @@
-# Hardware test checklist for probe v0.13.1 (covers 4a drain fix, 4b TX, 4c link regs, 4d async engine)
+# Hardware test checklist for probe v0.14.0 (v0.13.1 content below, plus data txdesc run 3) (covers 4a drain fix, 4b TX, 4c link regs, 4d async engine)
 
 Written 2026-10-07. One build, one load, one log.
 
@@ -8,10 +8,16 @@ Written 2026-10-07. One build, one load, one log.
   async_selftest: beacons=18, rx 42/42, tx 5/5, errors=0, tx_done_cb=5.
 - **Run 2 (v0.13.1, 2026-10-07): PASS.** `beacons=19 rx 44/44 crc_bad=0 errors=0 tx 5/5 errors=0 probe_resp=11 to_us=11` = TX proven over the air. link_selftest matched all expectations (BCN_PSR_RPT=0x0001, SECCFG=0xcf, HMTFR=0x00).
 
+- **Run 3 (v0.14.0): pending.** Only new item: `data_selftest` line (data-frame txdesc). Note `async_selftest` tx counters now include the
+  5 data frames, so expect `tx submitted=10 completed=10 errors=0` (5 probe requests + 5 Null/QoS-Null). Everything else unchanged.
+  `data_selftest: bssid=... (learned) sent=5 submit_err=0x0 | deauth/disassoc_to_us=N`: N>0 proves data txdesc over the air; N=0 is inconclusive
+  (AP may ignore Null frames), not a failure; `sent<5` or `submit_err!=0` or tx completed<submitted is a real failure. Command:
+  `/usr/bin/log show --last 5m --predicate 'sender == "RTL8188EUProbe"' --info | grep -E 'data_selftest|async_selftest'`
+
 ## Build / load
 ```
 cd ~/Projects/usbwifi-native-bringup
-make                                   # -> build/out/RTL8188EUProbe.kext (v0.13.1)
+make                                   # -> build/out/RTL8188EUProbe.kext (v0.14.0)
 sudo kmutil unload -b io.github.kodeaqua.RTL8188EUProbe     # remove the old one if loaded
 make load                              # or: make install (+ approve in Privacy & Security, reboot)
 ```

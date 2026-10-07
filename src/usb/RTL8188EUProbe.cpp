@@ -1032,13 +1032,18 @@ void RTL8188EUProbe::asyncStop()
 }
 
 // Probe-time test of the async engine: 2 s of RX on ch11, counting beacons of the AP seen earlier, then 5 async probe requests.
-struct AsyncTestCtx { volatile SInt32 beacons, probeResp, probeRespToUs, mgmt, txDone; uint8_t mac[6]; };
+struct AsyncTestCtx { volatile SInt32 beacons, probeResp, probeRespToUs, mgmt, txDone, haveBssid, deauthToUs, ackSeen; uint8_t mac[6]; uint8_t bssid[6]; };
 static void asyncTestRx(void *ctx, const uint8_t *f, uint32_t len)
 {
     AsyncTestCtx *c = (AsyncTestCtx *)ctx;
     if (len < 24) return;
     uint8_t t = f[0] & 0xfc;
-    if (t == 0x80) OSIncrementAtomic(&c->beacons);
+    if (t == 0x80) {
+        OSIncrementAtomic(&c->beacons);
+        if (!c->haveBssid) { memcpy(c->bssid, f + 16, 6); c->haveBssid = 1; }      // addr3 of a beacon = BSSID (first AP heard on ch11)
+    }
+    else if ((t == 0xc0 || t == 0xa0) && memcmp(f + 4, c->mac, 6) == 0 && c->haveBssid && memcmp(f + 10, c->bssid, 6) == 0)
+        OSIncrementAtomic(&c->deauthToUs);                                         // deauth/disassoc from that AP to us (reply to our class-3 data frame)
     else if (t == 0x50) {
         OSIncrementAtomic(&c->probeResp);
         if (memcmp(f + 4, c->mac, 6) == 0) OSIncrementAtomic(&c->probeRespToUs);   // addr1 == our MAC: proves our probe request reached the AP
@@ -1079,7 +1084,32 @@ void RTL8188EUProbe::asyncSelfTest()
         if (tr != kIOReturnSuccess) lastTx = tr;
         IOSleep(200);
     }
+    // v0.14.0 data txdesc check: 5 unassociated Null / QoS-Null data frames (to-DS) to the AP learned from its beacons.
+    // An AP that gets a class-3 frame from a non-associated STA normally answers deauth/disassoc to our MAC; that proves the
+    // data txdesc (BE queue -> pipe 1, QoS bit, seq from header, 6M driver rate) was accepted by the MAC and transmitted.
+    // No reply is INCONCLUSIVE, not a failure (some APs ignore Null frames); tx completions still prove the USB path.
+    IOReturn dataTx = kIOReturnSuccess; int dataSent = 0;
+    if (ctx.haveBssid) {
+        for (int i = 0; i < 5; i++) {
+            bool qos = (i >= 3);
+            uint8_t df[26]; memset(df, 0, sizeof df);
+            df[0] = qos ? 0xc8 : 0x48; df[1] = 0x01;                          // QoS-Null / Null, to-DS
+            memcpy(df + 4, ctx.bssid, 6); memcpy(df + 10, ctx.mac, 6); memcpy(df + 16, ctx.bssid, 6);
+            uint16_t sq = (uint16_t)(200 + i);
+            df[22] = (uint8_t)((sq << 4) & 0xff); df[23] = (uint8_t)((sq << 4) >> 8);
+            rtl8188eu_tx::Params p = { rtl8188eu_tx::selectQueue(df, 2 /* IEEE80211_AC_BE */), rtl8188eu_tx::kRate6M,
+                                       rtl8188eu_tx::kSecNone, false, false, false, 0xff, -1 };
+            IOReturn tr = txSubmitFrame(df, qos ? 26 : 24, p, nullptr);
+            if (tr != kIOReturnSuccess) dataTx = tr; else dataSent++;
+            IOSleep(200);
+        }
+        IOSleep(300);
+    }
     rxStop();
+    IOLog(LOGP "data_selftest: bssid=%02x:%02x:%02x:%02x:%02x:%02x (%s) sent=%d submit_err=0x%x | deauth/disassoc_to_us=%d "
+          "(>0 proves data txdesc over the air; 0 = inconclusive) tx_total submitted=%u completed=%u errors=%u\n",
+          ctx.bssid[0], ctx.bssid[1], ctx.bssid[2], ctx.bssid[3], ctx.bssid[4], ctx.bssid[5], ctx.haveBssid ? "learned" : "NO BEACON HEARD",
+          dataSent, dataTx, (int)ctx.deauthToUs, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors);
     IOLog(LOGP "async_selftest: start=0x%x chan11=0x%x rx_start=0x%x | 2 s passive: beacons=%d (expect ~19 for one AP at 102 ms) | "
           "rx submitted=%u completed=%u buffers=%u frames=%u crc_bad=%u c2h=%u errors=%u | "
           "tx submitted=%u completed=%u errors=%u last_submit=0x%x | probe_resp=%d (to_us=%d, >0 proves TX over the air) mgmt=%d tx_done_cb=%d\n",
