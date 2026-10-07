@@ -40,9 +40,10 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   Limitation: cut I unsupported.
 - **Stage 2: PASS on hardware (2026-10-07, v0.1.1).** Attaches to interface 0; endpoints 0x81 bulk IN,
   0x02/0x03 bulk OUT; `REG_SYS_CFG` = 0x24403735, cut 3 (= D, supported). Verified against rtl8xxxu source.
-- **Stage 3 started (v0.2.0, builds, untested on hardware):** efuse read (MAC @0xD7, rtl_id 0x8129) in the
-  probe kext. It writes a few power/clock/efuse-access regs like Linux does. Next: user runs
-  `make install`, reboots if asked, sends `log show` lines (`efuse MAC`, `rtl_id`). Then firmware download.
+- **Stage 3a (efuse): PASS on hardware (2026-10-07, v0.2.0).** 9346CR=0x20 boot=EFUSE; `rtl_id`=0x8129 OK;
+  MAC 50:3d:d1:6d:14:6a (efuse @0xD7); efuse VID/PID da 0b 79 81 = 0bda:8179 matches ioreg. Efuse read took ~430 ms.
+  Next (3b): firmware download (`rtl8188eufw.bin`), needs power_on sequence + fw loader ported from rtl8xxxu
+  source (verify against source first, do not write from memory).
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)

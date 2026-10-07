@@ -83,3 +83,12 @@ If rtl_id MISMATCH or all 0xff: send the 16 `efuse[...]` rows, do not proceed to
 - Link-time: the kext uses `StandardUSB::getEndpoint*` / `getNextAssociatedDescriptorWithType`
   (undefined symbols resolved at load via IOUSBHostFamily). Linked with `-undefined dynamic_lookup`,
   so a missing export only shows up in `kextutil -v` ("symbol not found") — send that output if so.
+
+## Result: v0.2.0 efuse (2026-10-07) — PASS
+```
+9346CR=0x0020 boot=EFUSE (EEPROM present)
+efuse rtl_id=0x8129 (OK, expect 0x8129)
+efuse MAC 50:3d:d1:6d:14:6a
+```
+Efuse bytes 0xD0..0xD3 = `da 0b 79 81` (VID 0bda, PID 8179), matches `ioreg -p IOUSB`.
+Efuse read ~430 ms (00.5299 -> 01.9570), acceptable for a one-time probe.
