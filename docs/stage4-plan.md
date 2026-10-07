@@ -47,3 +47,14 @@ Hardware validation idea (not written yet): in async_selftest, send a data frame
 (`start` = alloc core, attach, bringUp, registerService). Log prefix `RTL8188EUProbe:` and behavior are unchanged, so the pending v0.14.0 run also
 confirms the refactor did not regress anything (init chain, `rx_scan`, `link_selftest`, `async_selftest` lines must be as in run 2).
 Purpose: the Wi-Fi frontend (WP5 provider) will own an `RTL8188EUCore` directly and expose it through `rtw88_core_ops` + an `ieee80211_hw`.
+
+## Status 2026-10-07 (WP4 step 2: mac80211 face)
+New files: `src/usb/RTL8188EUHw.c` (C, compat headers; `ieee80211_ops` + `rtw88_core_ops` table), `src/usb/rtl8188eu_bridge.h` + `RTL8188EUBridge.cpp`
+(plain-C entry points so the compat headers never meet IOUSBHost headers), and core additions: `initHardware()` (the hardware-proven init chain without
+self-tests, stops at first failure), `getMac()`, `txFreeSlots()`, RX decrypt flag + `RxCallbackEx` (decrypted = !swdec && security != 0, rtl8xxxu core.c:6405).
+Compiles with the AirPort-RTW compat flags (checked with `-Werror=implicit-function-declaration`); NOT linked into AirPortRTW yet, NOT run on hardware.
+Verified against Linux source: RX has no FCS (rtl8xxxu does not set RX_INCLUDES_FCS), RCR appends ICV+MIC so the frontend's 8-byte CCMP trailer trim is correct.
+Slice limits: legacy rates only (no HT), sw scan only, CCMP only (TKIP/WEP -> -EOPNOTSUPP), fixed 6M data rate (GUESS), no TX status, no RSSI (RX_FLAG_NO_SIGNAL_VAL),
+efuse MAC only (set_station_mac rejects others), RX handles one packet per USB buffer (Linux loops on pkt_cnt; fine while aggregation is off, verify).
+Next: WP5 provider (IOUSBHostInterface match, create RTL8188EUCore, `rtl8188eu_hw_set_core` + `rtl8188eu_hw_register(true)`, then the frontend start path whose
+`create()` still takes `RTW88PCIDevice*`/`pci_dev*`), Info.plist USB personality, root Makefile integration target (WP6).

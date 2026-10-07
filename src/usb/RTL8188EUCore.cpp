@@ -934,7 +934,7 @@ void RTL8188EUCore::txCompleteTramp(void *owner, void *param, IOReturn status, u
 // Parse one bulk IN buffer (rxdesc16, no aggregation); same layout as rxScan. Returns false if there is no 802.11 frame.
 bool RTL8188EUCore::parseRx(const uint8_t *b, uint32_t got, RxInfo *out)
 {
-    out->frame = nullptr; out->len = 0; out->crcBad = false; out->c2h = false;
+    out->frame = nullptr; out->len = 0; out->crcBad = false; out->c2h = false; out->decrypted = false;
     if (got < 24) return false;
     const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12);
     uint32_t pktLen = dw0 & 0x3fff, drv = ((dw0 >> 16) & 0xf) * 8, shift = (dw0 >> 24) & 3;
@@ -943,6 +943,8 @@ bool RTL8188EUCore::parseRx(const uint8_t *b, uint32_t got, RxInfo *out)
     uint32_t off = 24 + drv + shift;
     if (pktLen < 10 || off + pktLen > got) return false;
     out->frame = b + off; out->len = pktLen;
+    // rtl8xxxu_rxdesc16: security = dw0[22:20], swdec = dw0[27]; core.c:6405 sets RX_FLAG_DECRYPTED when !swdec && security != 0.
+    out->decrypted = !(dw0 & (1u << 27)) && ((dw0 >> 20) & 7) != 0;
     return true;
 }
 
@@ -956,7 +958,8 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxBuffers);
         if (self->parseRx((const uint8_t *)slot->buf->getBytesNoCopy(), bytes, &ri)) {
             OSIncrementAtomic((volatile SInt32 *)&self->_stRxFrames);
-            if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
+            if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted);
+            else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
         else if (ri.c2h) OSIncrementAtomic((volatile SInt32 *)&self->_stRxC2h);
     } else if (status != kIOReturnAborted) {
@@ -1609,6 +1612,32 @@ bool RTL8188EUCore::bringUp()
     }
 
     return true;
+}
+
+void RTL8188EUCore::getMac(uint8_t mac[6]) { memcpy(mac, _efuse + kEfuseOffMac, 6); }
+unsigned RTL8188EUCore::txFreeSlots() { return kTxSlots - (unsigned)__builtin_popcount((unsigned)_txBusyMask); }
+
+// Same chain as bringUp() (same calls, same order, hardware-proven) without register dumps or self-tests.
+// Linux order: identify -> efuse -> power_on -> firmware -> init_mac -> init_phy_bb -> init_phy_rf -> init_wmac -> tail.
+IOReturn RTL8188EUCore::initHardware()
+{
+    uint32_t sysCfg = 0;
+    IOReturn r = regRead(kRegSysCfg, &sysCfg, sizeof(sysCfg));
+    if (r != kIOReturnSuccess) return r;
+    if ((sysCfg & kSysCfgTrpVauxEn) || ((sysCfg & kSysCfgChipVerMask) >> 12) == 8) return kIOReturnUnsupported;
+#define STEP(call, name) do { r = (call); if (r != kIOReturnSuccess) { IOLog(LOGP "initHardware: " name " FAILED 0x%08x\n", r); return r; } } while (0)
+    STEP(efuseReadAll(), "efuse");
+    STEP(powerOn(), "power_on");
+    STEP(loadFirmware(), "firmware");
+    STEP(initMac(), "init_mac");
+    STEP(initPhyBb(), "init_phy_bb");
+    STEP(initPhyRf(), "init_phy_rf");
+    STEP(initWmac(), "init_wmac");
+    STEP(initTail(), "init_tail");
+#undef STEP
+    IOLog(LOGP "initHardware OK, MAC %02x:%02x:%02x:%02x:%02x:%02x\n", _efuse[kEfuseOffMac], _efuse[kEfuseOffMac + 1],
+          _efuse[kEfuseOffMac + 2], _efuse[kEfuseOffMac + 3], _efuse[kEfuseOffMac + 4], _efuse[kEfuseOffMac + 5]);
+    return kIOReturnSuccess;
 }
 
 // Stop async I/O, release pipes/buffers and close the interface. Safe to call repeatedly (hot-unplug, stop, free).

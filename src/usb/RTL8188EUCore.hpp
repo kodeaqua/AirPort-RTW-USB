@@ -22,6 +22,9 @@ public:
     void free() override;
     bool attach(IOService *owner, IOUSBHostInterface *iface);   // open interface, endpoints, control buffers
     bool bringUp();                                             // full init chain + self-tests (logs results)
+    void     getMac(uint8_t mac[6]);                            // efuse MAC (valid after efuseReadAll)
+    unsigned txFreeSlots();                                     // idle async TX buffers
+    IOReturn initHardware();                                    // same init chain, no self-tests; stops at first failure (frontend path)
     void closeAll();                                            // stop I/O, release everything (idempotent)
 
     IOService *_owner = nullptr;
@@ -94,7 +97,9 @@ public:
     // Stage 4d: async engine. Callbacks run on the USB workloop; keep them short and non-blocking.
     typedef void (*RxCallback)(void *ctx, const uint8_t *frame, uint32_t len);       // one received 802.11 frame (no FCS)
     typedef void (*TxDoneCallback)(void *ctx, void *cookie, IOReturn status);
-    struct RxInfo { const uint8_t *frame; uint32_t len; bool crcBad; bool c2h; };
+    struct RxInfo { const uint8_t *frame; uint32_t len; bool crcBad; bool c2h; bool decrypted; };
+    // Frontend RX hook (preferred over _rxCb when set): decrypted = !swdec && security != NONE (rtl8xxxu core.c:6405).
+    typedef void (*RxCallbackEx)(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted);
     struct RxSlot { IOBufferMemoryDescriptor *buf; };
     struct TxSlot { IOBufferMemoryDescriptor *buf; void *cookie; };
     static bool parseRx(const uint8_t *b, uint32_t got, RxInfo *out);
@@ -131,6 +136,7 @@ public:
     volatile UInt32           _stRxSubmitted = 0, _stRxCompleted = 0, _stRxBuffers = 0, _stRxFrames = 0, _stRxCrcBad = 0,
                               _stRxC2h = 0, _stRxErrors = 0, _stTxSubmitted = 0, _stTxCompleted = 0, _stTxErrors = 0;
     RxCallback                _rxCb = nullptr;
+    RxCallbackEx              _rxCbEx = nullptr;
     TxDoneCallback            _txDoneCb = nullptr;
     void                     *_cbCtx = nullptr;
     uint32_t                  _camMap = 0;   // used security CAM entries
