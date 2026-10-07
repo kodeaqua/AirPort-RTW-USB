@@ -42,7 +42,8 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   0x02/0x03 bulk OUT; `REG_SYS_CFG` = 0x24403735, cut 3 (= D, supported). Verified against rtl8xxxu source.
 - **Stage 3a (efuse): PASS on hardware (2026-10-07, v0.2.0).** 9346CR=0x20 boot=EFUSE; `rtl_id`=0x8129 OK;
   MAC 50:3d:d1:6d:14:6a (efuse @0xD7); efuse VID/PID da 0b 79 81 = 0bda:8179 matches ioreg. Efuse read took ~430 ms.
-  v0.3.0 (builds, untested on hw): MAC power_on ported from rtl8xxxu 8188e.c, logs `power_on OK|FAILED`.
+- **Stage 3a' (power_on): PASS on hardware (2026-10-07, v0.3.0).** Ported from rtl8xxxu 8188e.c; log:
+  `power_on OK (0x00000000): CR=0x063f SYS_CLKR=0xfca3 (MAC_CLK on) APS_FSMCO=0x20020002`.
   Next (3b): firmware download (`rtl8188eufw.bin`), needs power_on sequence + fw loader ported from rtl8xxxu
   source (verify against source first, do not write from memory).
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
