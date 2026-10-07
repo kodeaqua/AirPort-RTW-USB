@@ -30,6 +30,12 @@ cut 8 (I) and bit 23 (test chip) are rejected by rtl8xxxu (`8188e.c rtl8188eu_id
 5. Unplug/replug the dongle; confirm no panic and the log shows a fresh attach.
 6. `make unload`
 
+## If macOS asks for approval + restart (Tahoe)
+Use the persistent path instead of `make load` (its staging dir under /private/tmp is wiped on reboot):
+`make install` -> approve in System Settings > Privacy & Security (if shown) -> restart -> run steps 3-5.
+Undo: `make uninstall` + restart. Keep a bootable fallback EFI before restarting. The approval flow on
+a Hackintosh with relaxed SIP is **not verified by me**; send the exact prompt text if it differs.
+
 ## Expected log
 ```
 RTL8188EUProbe: attached: interface 0 class 0xff endpoints 3

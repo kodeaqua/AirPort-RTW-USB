@@ -10,7 +10,7 @@ FLAGS  := -arch x86_64 -mmacosx-version-min=13.0 -fno-exceptions -fno-rtti -fno-
           -isysroot $(SDK) -I$(MKSDK)/Headers -I$(SDK)/System/Library/Frameworks/Kernel.framework/Headers
 CXXF   := $(FLAGS) -fapple-kext -std=c++17 -DKERNEL -Wall -Wno-deprecated-declarations -Wno-nullability-completeness
 
-.PHONY: usbprobe load unload clean
+.PHONY: usbprobe load unload install uninstall clean
 usbprobe: $(OUT)/Contents/MacOS/RTL8188EUProbe
 
 $(OUT)/Contents/MacOS/RTL8188EUProbe: $(OBJ)/RTL8188EUProbe.o $(OBJ)/kmod_info.o kext/RTL8188EUProbe.kext/Contents/Info.plist
@@ -35,6 +35,22 @@ load: usbprobe
 	cp -R $(OUT) $(STAGE)/
 	sudo chown -R root:wheel $(STAGE)
 	sudo kextutil -v $(STAGE)/RTL8188EUProbe.kext
+
+# Persistent install (survives reboot; needed when macOS asks for approval + restart).
+# After this: approve in System Settings > Privacy & Security if prompted, then restart.
+INSTALLED := /Library/Extensions/RTL8188EUProbe.kext
+install: usbprobe
+	sudo rm -rf $(INSTALLED)
+	sudo cp -R $(OUT) $(INSTALLED)
+	sudo chown -R root:wheel $(INSTALLED)
+	sudo chmod -R 755 $(INSTALLED)
+	sudo kmutil load -p $(INSTALLED) || true
+	@echo "If macOS asks: approve in Privacy & Security, then restart."
+
+uninstall:
+	-sudo kmutil unload -b io.github.kodeaqua.RTL8188EUProbe
+	sudo rm -rf $(INSTALLED)
+	@echo "Restart to rebuild the kext collection without it."
 
 unload:
 	sudo kextunload -b io.github.kodeaqua.RTL8188EUProbe
