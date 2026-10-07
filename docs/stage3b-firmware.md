@@ -52,8 +52,8 @@ each a control write (req 0x05, 0x40, wValue=addr advancing per chunk, wIndex=0)
 - `init_queue_reserved_page` (core.c:3815): needs ep flags; 8188eu: total=0xa9, hi=0x29, lo=0x1c, norm=0x1c.
   Writes `REG_RQPN_NPQ`(0x214) then `REG_RQPN`(0x200) with LOAD.
 - **(open)** Whether the firmware download truly needs the queue/RQPN/TRXFF_BNDY writes first on 8188eu
-  (Linux order says do them; the dongle has 3 bulk OUT per CLAUDE.md, so `ep_tx_count` handling must be
-  derived from the real endpoint list, see core.c:1699-1734). Plan: port them in the same order, do not skip.
+  (Linux order says do them; the dongle has 2 bulk OUT (0x02, 0x03; hardware log v0.4.0) => `config_endpoints_no_sie`
+  gives high+normal, no low queue; initQueues handles 2 and 3 OUT, see core.c:1717-1735, 2591-2640, 3815-3845). Plan: port them in the same order, do not skip.
 - **(open)** `request_hw_feature` and `LLT init` ordering relative to the firmware: LLT is not on the
   path before download in the code above; confirm in `rtl8xxxu_init_device` before stage 3c.
 

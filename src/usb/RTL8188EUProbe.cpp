@@ -281,26 +281,36 @@ IOReturn RTL8188EUProbe::regWriteN(uint16_t addr, const uint8_t *buf, uint32_t l
     return kIOReturnSuccess;
 }
 
-// Ports of rtl8xxxu_init_queue_reserved_page, rtl8xxxu_init_queue_priority (case 3) and the
-// REG_TRXFF_BNDY+2 write, in the order of core.c:3990-4001. 8188eu uses config_endpoints_no_sie
-// (8188e.c:418): 3 bulk OUT => high, normal and low queues all present.
+// Ports of rtl8xxxu_init_queue_reserved_page (core.c:3815), rtl8xxxu_init_queue_priority (core.c:2580,
+// cases 2 and 3) and the REG_TRXFF_BNDY+2 write, in the order of core.c:3990-4001.
+// 8188eu uses config_endpoints_no_sie (8188e.c:418, core.c:1717): 1st OUT ep = high, 2nd = normal,
+// 3rd+ = low. The user's dongle has 2 bulk OUT (0x02, 0x03) => high + normal, no low queue.
 // GUESS: Linux skips the reserved-page write if the MAC was already powered before power_on;
 // we always write it (fresh plug assumed).
 IOReturn RTL8188EUProbe::initQueues()
 {
     IOReturn r;
-    if (_nBulkOut != 3) { IOLog(LOGP "initQueues: expected 3 bulk OUT, have %u\n", _nBulkOut); return kIOReturnUnsupported; }
+    if (_nBulkOut != 2 && _nBulkOut != 3) {
+        IOLog(LOGP "initQueues: unsupported bulk OUT count %u (handled: 2, 3)\n", _nBulkOut);
+        return kIOReturnUnsupported;
+    }
+    const bool hasLow = (_nBulkOut == 3);
 
-    uint32_t hq = kTxPageHi8188e, lq = kTxPageLo8188e, nq = kTxPageNorm8188e;
+    uint32_t hq = kTxPageHi8188e, lq = hasLow ? kTxPageLo8188e : 0, nq = kTxPageNorm8188e;
     uint32_t pubq = kTxTotalPage8188e - hq - lq - nq - 1;
     if ((r = write32(kRegRqpnNpq, (nq << 0) | (0u << 16))) != kIOReturnSuccess) return r;
     if ((r = write32(kRegRqpn, kRqpnLoad | (hq << 0) | (lq << 8) | (pubq << 16))) != kIOReturnSuccess) return r;
 
+    // core.c case 3: VO,MG,HI=high VI=normal BE,BK=low. case 2 (high+normal): VO,VI,MG,HI=high BE,BK=normal.
+    const uint16_t voq = kQueueHigh, miq = kQueueHigh;
+    const uint16_t viq = hasLow ? kQueueNormal : kQueueHigh;
+    const uint16_t beq = hasLow ? kQueueLow : kQueueNormal;
+    IOLog(LOGP "initQueues: %u bulk OUT, %s low queue\n", _nBulkOut, hasLow ? "with" : "no");
+
     uint16_t v16;
     if ((r = read16(kRegTrxdmaCtrl, &v16)) != kIOReturnSuccess) return r;
     v16 &= 0x7;
-    v16 |= (kQueueHigh << 4) | (kQueueNormal << 6) | (kQueueLow << 8) |
-           (kQueueLow << 10) | (kQueueHigh << 12) | (kQueueHigh << 14);   // VO VI BE BK MG HI
+    v16 |= (voq << 4) | (viq << 6) | (beq << 8) | (beq << 10) | (miq << 12) | (miq << 14);   // VO VI BE BK MG HI
     if ((r = write16(kRegTrxdmaCtrl, v16)) != kIOReturnSuccess) return r;
 
     return write16(kRegTrxffBndy + 2, kTrxffBoundary8188e);
