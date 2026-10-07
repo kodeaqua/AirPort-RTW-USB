@@ -38,10 +38,11 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   gitignored; our own code lives in `src/usb/`, `kext/`, root `Makefile`).
 - **Stage 1 core: `rtl8xxxu` proposed** (supports RTL8188EU, GPL-2.0-only, fw `rtlwifi/rtl8188eufw.bin`).
   Limitation: cut I unsupported.
-- **Stage 2 in progress:** read-only `RTL8188EUProbe.kext` (`make usbprobe`, `make install`/`load`).
-  Builds; **not yet confirmed on hardware**. `kextutil` first failed on dependency
-  `IOUSBHostFamily 1.0` -> fixed to `1.2`; then macOS required approval + restart (`make install`).
-  Next: user reboots, sends `log show` lines (`REG_SYS_CFG`, cut, endpoints). Then Stage 3.
+- **Stage 2: PASS on hardware (2026-10-07, v0.1.1).** Attaches to interface 0; endpoints 0x81 bulk IN,
+  0x02/0x03 bulk OUT; `REG_SYS_CFG` = 0x24403735, cut 3 (= D, supported). Verified against rtl8xxxu source.
+- **Stage 3 started (v0.2.0, builds, untested on hardware):** efuse read (MAC @0xD7, rtl_id 0x8129) in the
+  probe kext. It writes a few power/clock/efuse-access regs like Linux does. Next: user runs
+  `make install`, reboots if asked, sends `log show` lines (`efuse MAC`, `rtl_id`). Then firmware download.
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)
@@ -52,7 +53,9 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
 - Tahoe IOUSBHostFamily = 1.2 (compat 1.0.1). Match on `IOUSBHostInterface`; interface
   `deviceRequest()` has no `forClient` arg.
 - Register access (rtl8xxxu): ctrl req 0x05, type 0xC0 read / 0x40 write, wValue=addr, wIndex=0, 500 ms.
-  `REG_SYS_CFG`=0xF0, cut=(v&0xF000)>>12.
+  `REG_SYS_CFG`=0xF0, cut=(v&0xF000)>>12, cut letter = 'A'+cut, cut 8 (I) rejected.
+- Linux order: identify_chip -> read_efuse -> parse_efuse -> (later) power_on/firmware. Efuse is read BEFORE power_on.
+- Logs: use `/usr/bin/log show` (zsh shadows `log`); `dmesg` shows nothing. `make airport` runs inside `AirPort-RTW/`.
 
 ## Working conventions
 

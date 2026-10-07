@@ -1,15 +1,30 @@
-# Stage 2 probe — RTL8188EUProbe.kext (read-only)
+# Stage 2 probe — RTL8188EUProbe.kext
 
-**Scope:** test-protocol steps 1-2 only. Attaches to the dongle's `IOUSBHostInterface`
-(0bda:8179, interface 0), logs endpoints, reads `REG_SYS_CFG` (0xF0) via vendor control request.
-No register writes, no firmware, no Wi-Fi. Not an IO80211 driver.
+## Result (confirmed on hardware, 2026-10-07, v0.1.1)
+Test-protocol step 1 PASS, step 2 (chip ID) PASS:
+```
+attached: interface 0 class 0xff endpoints 3
+endpoint 0x81 IN bulk, 0x02 OUT bulk, 0x03 OUT bulk   -> bulk IN ok, bulk OUT count 2
+REG_SYS_CFG(0x00f0) = 0x24403735 cut=3
+```
+cut 3 = 'D' (`'A' + chip_cut`, rtl8xxxu core.c); only cut 8 (I) and bit 23 (test chip) are rejected.
+Benign: kernelmanagerd logs "Signing information did not contain a cdhash" (ad-hoc signed) yet the kext
+is approved and loads. `dmesg` shows nothing on modern macOS; use `/usr/bin/log show` (plain `log` is
+shadowed by a zsh builtin).
+
+## v0.2.0 scope (step 2b: MAC from efuse) — untested on hardware
+Adds `regWrite` and a port of `rtl8xxxu_read_efuse` / `rtl8xxxu_read_efuse8`. This is **no longer
+strictly read-only**: like Linux (before power-on) it writes `REG_EFUSE_ACCESS`(0xCF)=0x69 (restored
+to 0x00 afterwards), and sets `SYS_ISO_CTRL`.PWC_EV12V, `SYS_FUNC`.ELDR, `SYS_CLKR` loader+ANA8M only if
+not already set. No firmware, no Wi-Fi. Not an IO80211 driver. Efuse layout (`struct rtl8188eu_efuse`):
+rtl_id (LE16) @0x00 must be 0x8129, MAC @0xD7. The diagnostic device-level personality was removed.
 
 ## Build
 ```
 ./AirPort-RTW/scripts/bootstrap-deps.sh   # once; provides MacKernelSDK
 make usbprobe                             # -> build/out/RTL8188EUProbe.kext
 ```
-Compiles clean (`-Wall`). **Untested on hardware.**
+Compiles clean (`-Wall`). v0.1.1 confirmed on hardware; v0.2.0 efuse read not yet.
 
 ## Protocol facts used (from Linux rtl8xxxu, verified 2026-10-07)
 bmRequestType 0xC0 (read), bRequest 0x05, wValue = register address, wIndex = 0, timeout 500 ms
@@ -44,6 +59,16 @@ RTL8188EUProbe: bulk IN ok, bulk OUT count 2       (count is a guess: not yet ve
 RTL8188EUProbe: REG_SYS_CFG(0x00f0) = 0x........ cut=N
 ```
 Pass = attach + endpoints + a plausible `SYS_CFG` (not 0x00000000 / 0xFFFFFFFF), cut != 8.
+
+v0.2.0 adds, after the SYS_CFG line:
+```
+RTL8188EUProbe: 9346CR=0x.... boot=EFUSE|EEPROM
+RTL8188EUProbe: efuse rtl_id=0x8129 (OK, expect 0x8129)
+RTL8188EUProbe: efuse MAC xx:xx:xx:xx:xx:xx
+RTL8188EUProbe: efuse[000] ... (16 rows)
+```
+Pass = rtl_id OK and a MAC that is not ff:ff:.. / 00:00:.. (multicast bit of byte 0 should be 0).
+If rtl_id MISMATCH or all 0xff: send the 16 `efuse[...]` rows, do not proceed to firmware.
 
 ## If it fails, send back
 `kextutil -v` output, the log lines above, `kextstat | grep -i RTL8188`, and any panic report in
