@@ -913,6 +913,22 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
               (int)_stTxSubmitted, (int)p.queue, pipe, len, total, total % 512, frame[1], frame[0],
               OSReadLittleInt32(tb, 0), OSReadLittleInt32(tb, 4));
     }
+    // v0.15.3 diagnostics (caller context, so sync control reads are safe): on the first TX timeout dump the TX page/DMA regs
+    // and abort the wedged pipes; every 256 submissions print the RX counters (does RX reach the core at all?).
+    if (_txDumpPending) {
+        _txDumpPending = 0;
+        uint32_t rq = 0, nq = 0, ck = 0, ds = 0; uint8_t pz = 0; uint16_t cr = 0;
+        read32(kRegRqpn, &rq); read32(kRegRqpnNpq, &nq); read32(kRegTxdmaOffsetChk, &ck); read32(0x0210, &ds);
+        read8(kRegTxpause, &pz); read16(0x0100, &cr);
+        IOLog(LOGP "tx_wedge: RQPN=0x%08x RQPN_NPQ=0x%08x TXDMA_OFFSET_CHK=0x%08x 0x210=0x%08x TXPAUSE=0x%02x CR=0x%04x busy=0x%x nOut=%u\n",
+              rq, nq, ck, ds, pz, cr, (unsigned)_txBusyMask, _nBulkOut);
+        for (uint32_t i = 0; i < _nBulkOut; i++) if (_bulkOut[i]) _bulkOut[i]->abort();
+    }
+    if ((_stTxSubmitted & 0xff) == 0)
+        IOLog(LOGP "stats: tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u crc=%u c2h=%u err=%u\n",
+              (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
+              (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames, (unsigned)_stRxCrcBad,
+              (unsigned)_stRxC2h, (unsigned)_stRxErrors);
     IOReturn r = _bulkOut[pipe]->io(t.buf, total, &c, 1000);
     if (r != kIOReturnSuccess) {
         IOLog(LOGP "tx submit failed 0x%08x pipe=%d\n", r, pipe);
@@ -934,6 +950,7 @@ void RTL8188EUCore::txCompleteTramp(void *owner, void *param, IOReturn status, u
     RTL8188EUCore *self = (RTL8188EUCore *)owner; TxSlot *t = (TxSlot *)param;
     OSIncrementAtomic((volatile SInt32 *)&self->_stTxCompleted);
     if (status != kIOReturnSuccess) {
+        if (self->_stTxErrors == 0) self->_txDumpPending = 1;
         if (OSIncrementAtomic((volatile SInt32 *)&self->_stTxErrors) < 6)
             IOLog(LOGP "tx complete error 0x%08x bytes=%u (submitted=%d completed=%d)\n", status, bytes,
                   (int)self->_stTxSubmitted, (int)self->_stTxCompleted);
