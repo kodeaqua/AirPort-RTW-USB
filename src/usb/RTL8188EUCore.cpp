@@ -952,7 +952,8 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
     if ((_stTxSubmitted & 0xff) == 0) {
         uint32_t rcr = 0, bss0 = 0; uint8_t msr = 0;   // v0.15.4: RX stuck at frames=74 with only C2H arriving: is the RX filter state sane?
         read32(kRegRcr, &rcr); read8(kRegMsr, &msr); read32(kRegBssid, &bss0);
-        IOLog(LOGP "rxdiag: RCR=0x%08x MSR=0x%02x BSSID[0:3]=0x%08x\n", rcr, msr, bss0);
+        uint32_t mac0 = 0; read32(0x0610, &mac0); uint16_t fm2 = 0; read16(0x06a4, &fm2);
+        IOLog(LOGP "rxdiag: RCR=0x%08x MSR=0x%02x BSSID[0:3]=0x%08x MACID[0:3]=0x%08x RXFLTMAP2=0x%04x\n", rcr, msr, bss0, mac0, fm2);
     }
     if ((_stTxSubmitted & 0xff) == 0) {
         // v0.15.5: RX stall monitor. No 802.11 frame since the last window while TX goes on: dump PHY/MAC state once per
@@ -969,9 +970,9 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
         _statLastFrames = fr;
     }
     if ((_stTxSubmitted & 0xff) == 0)
-        IOLog(LOGP "stats: ch=%d tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u crc=%u c2h=%u err=%u\n",
+        IOLog(LOGP "stats: ch=%d tx sub=%u comp=%u err=%u | rx sub=%u comp=%u buf=%u frames=%u ucdata=%u crc=%u c2h=%u err=%u\n",
               _curChannel, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted, (unsigned)_stTxErrors, (unsigned)_stRxSubmitted,
-              (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames, (unsigned)_stRxCrcBad,
+              (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames, (unsigned)_stRxUcData, (unsigned)_stRxCrcBad,
               (unsigned)_stRxC2h, (unsigned)_stRxErrors);
     IOReturn r = _bulkOut[pipe]->io(t.buf, total, &c, 1000);
     if (r != kIOReturnSuccess) {
@@ -1031,15 +1032,19 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxBuffers);
         if (self->parseRx((const uint8_t *)slot->buf->getBytesNoCopy(), bytes, &ri)) {
             OSIncrementAtomic((volatile SInt32 *)&self->_stRxFrames);
-            // v0.15.0 diagnostic: does any data frame (EAPOL M1) reach the host? Log the first few headers.
-            if (ri.len >= 24 && (ri.frame[0] & 0x0c) == 0x08) {
+            // v0.15.6 diagnostic: RCR has no AAP, so every unicast data frame heard is addressed to us (M1 included).
+            // Log the first 60 with QoS-aware LLC ethertype; count them all for the stats line.
+            if (ri.len >= 24 && (ri.frame[0] & 0x0c) == 0x08 && !(ri.frame[4] & 1)) {
                 static volatile SInt32 nData;
+                OSIncrementAtomic((volatile SInt32 *)&self->_stRxUcData);
                 SInt32 n = OSIncrementAtomic(&nData);
-                if (n < 12)
-                    IOLog(LOGP "rx DATA #%d: fc=%02x%02x len=%u a1=%02x:%02x:%02x:%02x:%02x:%02x a2=%02x:%02x:%02x:%02x:%02x:%02x dec=%d\n",
+                if (n < 60) {
+                    uint32_t hl = (ri.frame[0] & 0x80) ? 26 : 24;
+                    unsigned et = ri.len >= hl + 8 ? ((unsigned)ri.frame[hl + 6] << 8 | ri.frame[hl + 7]) : 0;
+                    IOLog(LOGP "rx UCDATA #%d: fc=%02x%02x len=%u a2=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%04x dec=%d\n",
                           (int)n, ri.frame[0], ri.frame[1], ri.len,
-                          ri.frame[4], ri.frame[5], ri.frame[6], ri.frame[7], ri.frame[8], ri.frame[9],
-                          ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], (int)ri.decrypted);
+                          ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], et, (int)ri.decrypted);
+                }
             }
             if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
@@ -1144,7 +1149,7 @@ void RTL8188EUCore::asyncSelfTest()
     if (ra != kIOReturnSuccess) { IOLog(LOGP "async_selftest: asyncStart FAILED 0x%08x\n", ra); return; }
     IOReturn rc = setChannel(11);
     _cbCtx = &ctx; _rxCb = asyncTestRx; _txDoneCb = asyncTestTxDone;
-    _stRxSubmitted = _stRxCompleted = _stRxBuffers = _stRxFrames = _stRxCrcBad = _stRxC2h = _stRxErrors = 0;
+    _stRxSubmitted = _stRxCompleted = _stRxBuffers = _stRxFrames = _stRxCrcBad = _stRxC2h = _stRxUcData = _stRxErrors = 0;
     _stTxSubmitted = _stTxCompleted = _stTxErrors = 0;
     IOReturn rr = rxStart();
     IOSleep(2000);
