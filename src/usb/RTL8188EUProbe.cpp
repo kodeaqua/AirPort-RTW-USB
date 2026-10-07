@@ -42,6 +42,14 @@ enum {
     kRegLpldoCtrl     = 0x0023, kLpldoSleep = 1u << 4,
     kRegCr            = 0x0100,
     kRegMaxAggrNum    = 0x04ca,  // REG_MAX_AGGR_NUM (regs.h:634)
+    // Stage 3c-2 BB init / RF access (regs.h, verified 2026-10-07)
+    kSysFuncUsba = 1u << 2, kSysFuncUsbd = 1u << 4, kSysFuncDioRf = 1u << 13,
+    kRegRfCtrl = 0x001f, kRfEnable = 1u << 0, kRfRstb = 1u << 1, kRfSdmrstb = 1u << 2,
+    kRegFpgaXaHssiParm1 = 0x0820, kFpgaHssiParm1Pi = 1u << 8,
+    kRegFpgaXaHssiParm2 = 0x0824, kHssiParm2AddrShift = 23, kHssiParm2AddrMask = 0x7f800000u,
+    kHssiParm2EdgeRead = 1u << 31,
+    kRegFpgaXaLssiParm = 0x0840, kLssiParmAddrShift = 20, kLssiParmDataMask = 0x000fffff,
+    kRegFpgaXaLssiReadback = 0x08a0, kRegHspiXaReadback = 0x08b8,
     kCrHciTxdma = 1u << 0, kCrHciRxdma = 1u << 1, kCrTxdma = 1u << 2, kCrRxdma = 1u << 3,
     kCrProtocol = 1u << 4, kCrSchedule = 1u << 5, kCrSecurity = 1u << 9, kCrCaltimer = 1u << 10,
     kSysClkMacClkEnable = 1u << 11,
@@ -446,6 +454,68 @@ IOReturn RTL8188EUProbe::initMac()
     return write16(kRegMaxAggrNum, 0x0707);
 }
 
+// Port of rtl8xxxu_read_rfreg for RF_A (core.c:867). Same write/delay sequence as Linux.
+IOReturn RTL8188EUProbe::rfRead(uint8_t reg, uint32_t *out)
+{
+    IOReturn r; uint32_t hssia, v;
+    if ((r = read32(kRegFpgaXaHssiParm2, &hssia)) != kIOReturnSuccess) return r;
+    v = hssia;                                   // path A: val32 = hssia
+    v &= ~kHssiParm2AddrMask;
+    v |= (uint32_t)reg << kHssiParm2AddrShift;
+    v |= kHssiParm2EdgeRead;
+    hssia &= ~kHssiParm2EdgeRead;
+    if ((r = write32(kRegFpgaXaHssiParm2, hssia)) != kIOReturnSuccess) return r;
+    IODelay(10);
+    if ((r = write32(kRegFpgaXaHssiParm2, v)) != kIOReturnSuccess) return r;
+    IODelay(100);
+    hssia |= kHssiParm2EdgeRead;
+    if ((r = write32(kRegFpgaXaHssiParm2, hssia)) != kIOReturnSuccess) return r;
+    IODelay(10);
+    if ((r = read32(kRegFpgaXaHssiParm1, &v)) != kIOReturnSuccess) return r;
+    r = read32((v & kFpgaHssiParm1Pi) ? kRegHspiXaReadback : kRegFpgaXaLssiReadback, &v);
+    *out = v & 0xfffff;
+    return r;
+}
+
+// Port of rtl8xxxu_write_rfreg for RF_A (core.c:912); the RTL8192E power-save quirk does not apply.
+IOReturn RTL8188EUProbe::rfWrite(uint8_t reg, uint32_t data)
+{
+    data &= kLssiParmDataMask;
+    IOReturn r = write32(kRegFpgaXaLssiParm, ((uint32_t)reg << kLssiParmAddrShift) | data);
+    IODelay(1);
+    return r;
+}
+
+// Port of rtl8xxxu_init_phy_regs (core.c:2228): 32-bit writes, 1 us apart, {0xffff,0xffffffff} terminates.
+IOReturn RTL8188EUProbe::initPhyRegs(const Reg32Val *table)
+{
+    for (uint32_t i = 0; ; i++) {
+        if (table[i].reg == 0xffff && table[i].val == 0xffffffff) break;
+        IOReturn r = write32(table[i].reg, table[i].val);
+        if (r != kIOReturnSuccess) {
+            IOLog(LOGP "initPhyRegs: write32(0x%04x, 0x%08x) failed 0x%08x\n", table[i].reg, table[i].val, r);
+            return r;
+        }
+        IODelay(1);
+    }
+    return kIOReturnSuccess;
+}
+
+// Port of rtl8188eu_init_phy_bb (8188e.c:582) plus the 1T1R path of rtl8xxxu_init_phy_bb (core.c:2310):
+// the 1T2R patch block and RTL8192E quirk do not apply to the 8188EU; set_crystal_cap is deferred (3c-5).
+IOReturn RTL8188EUProbe::initPhyBb()
+{
+    IOReturn r; uint16_t v16;
+    if ((r = read16(kRegSysFunc, &v16)) != kIOReturnSuccess) return r;
+    v16 |= kSysFuncBbGlbRstn | kSysFuncBbrstb | kSysFuncDioRf;
+    if ((r = write16(kRegSysFunc, v16)) != kIOReturnSuccess) return r;
+    if ((r = write8(kRegRfCtrl, kRfEnable | kRfRstb | kRfSdmrstb)) != kIOReturnSuccess) return r;
+    // 8-bit write of REG_SYS_FUNC exactly as in 8188e.c:597 (low byte only).
+    if ((r = write8(kRegSysFunc, kSysFuncUsba | kSysFuncUsbd | kSysFuncBbGlbRstn | kSysFuncBbrstb)) != kIOReturnSuccess) return r;
+    if ((r = initPhyRegs(rtl8188eu_phy_init_table)) != kIOReturnSuccess) return r;
+    return initPhyRegs(rtl8188e_agc_table);
+}
+
 bool RTL8188EUProbe::start(IOService *provider)
 {
     if (!super::start(provider)) return false;
@@ -524,6 +594,16 @@ bool RTL8188EUProbe::start(IOService *provider)
                         read16(kRegMaxAggrNum, &aggr); read8(0x428, &b0); read8(0x652, &b1);
                         IOLog(LOGP "init_mac %s (0x%08x): MAX_AGGR_NUM=0x%04x (expect 0x0707) 0x428=0x%02x (expect 0x0a) 0x652=0x%02x (expect 0x20)\n",
                               mr == kIOReturnSuccess ? "OK" : "FAILED", mr, aggr, b0, b1);
+                        if (mr == kIOReturnSuccess) {
+                            // Stage 3c-2: BB init + RF accessor check (Linux order: init_mac -> init_phy_bb).
+                            IOReturn br = initPhyBb();
+                            uint32_t bb800 = 0, bb804 = 0, bb808 = 0, rf00 = 0xdeadbeef;
+                            read32(0x800, &bb800); read32(0x804, &bb804); read32(0x808, &bb808);
+                            IOReturn rr = rfRead(0x00, &rf00);
+                            IOLog(LOGP "init_phy_bb %s (0x%08x): 0x800=0x%08x 0x804=0x%08x 0x808=0x%08x; rf_read(A,0x00) %s 0x%05x (informational, RF not initialised yet)\n",
+                                  br == kIOReturnSuccess ? "OK" : "FAILED", br, bb800, bb804, bb808,
+                                  rr == kIOReturnSuccess ? "=" : "FAILED", rf00);
+                        }
                     }
                 }
             }

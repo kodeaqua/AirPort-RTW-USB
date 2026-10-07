@@ -3,6 +3,8 @@
 // enumerate endpoints, chip ID and efuse (MAC) read. No firmware, no Wi-Fi.
 #pragma once
 
+struct Reg32Val;   // generated tables header, see RTL8188EUProbe.cpp
+
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/usb/IOUSBHostDevice.h>
@@ -46,6 +48,13 @@ private:
 
     // Stage 3c-1: port of rtl8xxxu_init_mac (core.c:2187), see docs/stage3c-init.md.
     IOReturn initMac();
+
+    // Stage 3c-2: RF path A serial access (core.c:867 read_rfreg, :912 write_rfreg) and
+    // rtl8188eu_init_phy_bb (8188e.c:582). set_crystal_cap is deferred to 3c-5 (needs efuse xtal_k).
+    IOReturn rfRead(uint8_t reg, uint32_t *out);
+    IOReturn rfWrite(uint8_t reg, uint32_t data);
+    IOReturn initPhyRegs(const Reg32Val *table);   // rtl8xxxu_init_phy_regs
+    IOReturn initPhyBb();
 
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);

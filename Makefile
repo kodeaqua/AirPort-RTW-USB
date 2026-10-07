@@ -23,7 +23,7 @@ $(OUT)/Contents/MacOS/RTL8188EUProbe: $(OBJ)/RTL8188EUProbe.o $(OBJ)/kmod_info.o
 $(ROOT)/build/fw/rtl8188eu_fw.h:
 	./scripts/fetch-rtl8188eu-fw.sh
 
-$(ROOT)/build/fw/rtl8188eu_tables.h:
+$(ROOT)/build/fw/rtl8188eu_tables.h: scripts/gen-rtl8188eu-tables.py
 	python3 -I scripts/gen-rtl8188eu-tables.py
 
 $(OBJ)/RTL8188EUProbe.o: src/usb/RTL8188EUProbe.cpp src/usb/RTL8188EUProbe.hpp $(ROOT)/build/fw/rtl8188eu_fw.h $(ROOT)/build/fw/rtl8188eu_tables.h
