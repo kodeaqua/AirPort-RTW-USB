@@ -1033,14 +1033,17 @@ void RTL8188EUProbe::asyncStop()
 }
 
 // Probe-time test of the async engine: 2 s of RX on ch11, counting beacons of the AP seen earlier, then 5 async probe requests.
-struct AsyncTestCtx { volatile SInt32 beacons, probeResp, mgmt, txDone; };
+struct AsyncTestCtx { volatile SInt32 beacons, probeResp, probeRespToUs, mgmt, txDone; uint8_t mac[6]; };
 static void asyncTestRx(void *ctx, const uint8_t *f, uint32_t len)
 {
     AsyncTestCtx *c = (AsyncTestCtx *)ctx;
     if (len < 24) return;
     uint8_t t = f[0] & 0xfc;
     if (t == 0x80) OSIncrementAtomic(&c->beacons);
-    else if (t == 0x50) OSIncrementAtomic(&c->probeResp);
+    else if (t == 0x50) {
+        OSIncrementAtomic(&c->probeResp);
+        if (memcmp(f + 4, c->mac, 6) == 0) OSIncrementAtomic(&c->probeRespToUs);   // addr1 == our MAC: proves our probe request reached the AP
+    }
     if ((f[0] & 0x0c) == 0) OSIncrementAtomic(&c->mgmt);
 }
 static void asyncTestTxDone(void *ctx, void *cookie, IOReturn st) { OSIncrementAtomic(&((AsyncTestCtx *)ctx)->txDone); }
@@ -1048,6 +1051,7 @@ static void asyncTestTxDone(void *ctx, void *cookie, IOReturn st) { OSIncrementA
 void RTL8188EUProbe::asyncSelfTest()
 {
     AsyncTestCtx ctx = {};
+    memcpy(ctx.mac, _efuse + kEfuseOffMac, 6);
     IOReturn ra = asyncStart();
     if (ra != kIOReturnSuccess) { IOLog(LOGP "async_selftest: asyncStart FAILED 0x%08x\n", ra); return; }
     IOReturn rc = setChannel(11);
@@ -1079,10 +1083,10 @@ void RTL8188EUProbe::asyncSelfTest()
     rxStop();
     IOLog(LOGP "async_selftest: start=0x%x chan11=0x%x rx_start=0x%x | 2 s passive: beacons=%d (expect ~19 for one AP at 102 ms) | "
           "rx submitted=%u completed=%u buffers=%u frames=%u crc_bad=%u c2h=%u errors=%u | "
-          "tx submitted=%u completed=%u errors=%u last_submit=0x%x | probe_resp=%d mgmt=%d tx_done_cb=%d\n",
+          "tx submitted=%u completed=%u errors=%u last_submit=0x%x | probe_resp=%d (to_us=%d, >0 proves TX over the air) mgmt=%d tx_done_cb=%d\n",
           ra, rc, rr, (int)passive, (unsigned)_stRxSubmitted, (unsigned)_stRxCompleted, (unsigned)_stRxBuffers, (unsigned)_stRxFrames,
           (unsigned)_stRxCrcBad, (unsigned)_stRxC2h, (unsigned)_stRxErrors, (unsigned)_stTxSubmitted, (unsigned)_stTxCompleted,
-          (unsigned)_stTxErrors, lastTx, (int)ctx.probeResp, (int)ctx.mgmt, (int)ctx.txDone);
+          (unsigned)_stTxErrors, lastTx, (int)ctx.probeResp, (int)ctx.probeRespToUs, (int)ctx.mgmt, (int)ctx.txDone);
     _rxCb = nullptr; _txDoneCb = nullptr; _cbCtx = nullptr;
 }
 
@@ -1245,7 +1249,7 @@ void RTL8188EUProbe::linkSelfTest()
     read32(kRegResponseRateSet, &rsr); read32(kRegBcnPsrRpt - 0, &bpsr); read32(kRegEdcaBe, &be);
     IOLog(LOGP "link_selftest: add_if=0x%x bssid=0x%x rates=0x%x preamble=0x%x slot=0x%x join=0x%x\n", ra, rb, rc, rd, re, rf);
     IOLog(LOGP "link_selftest: MSR=0x%02x (expect 0x02) MACID=%02x:%02x:%02x:%02x:%02x:%02x (efuse) BSSID=%02x:%02x:%02x:%02x:%02x:%02x (expect 02:11:22:33:44:55) "
-          "RRSR=0x%08x (expect bit23 set, low bits 0x15f|0x15) INIRTS=%u (expect 4) SLOT=%u (expect 9) BCN_PSR_RPT lo16=0x%04x (expect 0xc001) EDCA_BE=0x%08x\n",
+          "RRSR=0x%08x (expect bit23 set, low bits 0x15f|0x15) INIRTS=%u (expect 4) SLOT=%u (expect 9) BCN_PSR_RPT lo16=0x%04x (written 0xc001; bits15:14 do not read back, expect 0x0001) EDCA_BE=0x%08x\n",
           msr, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], bss[0], bss[1], bss[2], bss[3], bss[4], bss[5], rsr, inirts, slot, bpsr & 0xffff, be);
     uint8_t hw = 0xff, hw2 = 0xff; uint32_t camCmd = 0xffffffff, camCmd2 = 0xffffffff;
     IOReturn rk = setKeyCcmp(0, true, testBssid, testKey, &hw);

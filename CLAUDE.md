@@ -55,8 +55,10 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   (table and accessors verified identical to Linux; not a blocker, proof comes from RX). See `docs/stage3c-init.md`.
   3c-4 (WMAC/LLT/EDCA) and 3c-5 (tx power, LC cal, tail) v0.8.0 ran OK on hardware (init_wmac/init_tail; RFSW PAPE-shift bug found, fixed in v0.8.1, awaiting retest; HWSEQ reads 0x7f, unexplained).
   4a passive RX scan (v0.10.0): PASS on hardware (17 mgmt frames, crc_bad=0, AP heard on ch9-13 only; heard_on=1 is a stale-FIFO artifact, see docs/stage3c-init.md).
-  Written, compiled, NOT yet run on hardware (2026-10-07): v0.10.1 stale-FIFO drain, v0.11.0 active scan + first TX (txdesc32 mgmt), v0.12.x link regs/CCMP CAM/H2C media status,
-  v0.13.0 async bulk RX/TX engine. One combined test: `docs/test-checklist.md`. Do not start the frontend shim (stage4-plan WP4-6) before TX is proven.
+  **PASS on hardware (2026-10-07, one combined run):** v0.10.1 stale-FIFO drain (ch1-8 clean, AP heard on ch9-13 = normal +-2 ch leakage of a ch11 AP), v0.11.0 active scan + TX (tx_ok=1 tx_fail=0 per channel),
+  v0.12.x link regs/CCMP CAM/H2C (HMTFR=0, SECCFG=0xcf), v0.13.0 async engine (rx 42/42, tx 5/5, errors=0, 18 beacons/2 s), init_wmac RFSW fix (v0.8.1) confirmed.
+  BCN_PSR_RPT reads 0x0001 after writing 0xc001 (bits 15:14 do not read back; code matches Linux core.c:4930, expectation fixed in v0.13.1).
+  TX over the air not yet airtight: v0.13.1 adds `to_us` counter (probe responses with addr1 == our MAC); needs one more run. See `docs/test-checklist.md`. Do not start the frontend shim (stage4-plan WP4-6) before TX is proven.
   Measured seam (2026-10-07): frontend needs ~45 `rtw88_*`/`rtw_pci_*` symbols; PCI coupling in RTW88IEEE80211.cpp is ~8 sites (L35-44, 482-530, 822-863, 933, 982),
   AirPortRTW.cpp has 43 PCI sites. The AirPort-RTW clone is gitignored here, so frontend changes must be kept as patch files in this repo.
   Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, RSSI/phystats, TX report, data-frame txdesc (QoS/rate/key), driver-side rate adaptation (ra_info).
