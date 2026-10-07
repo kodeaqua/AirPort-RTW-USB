@@ -106,3 +106,13 @@ power_on OK (0x00000000): CR=0x06ff? SYS_CLKR=0x.... (MAC_CLK on) APS_FSMCO=0x..
 (CR value is not predicted; the point is OK + MAC_CLK on.) Pass = `power_on OK` and `MAC_CLK on`.
 If FAILED: send the `powerOn:` lines (they name the step and FSMCO value). Do not proceed to firmware.
 Next (3b-2): `rtl8xxxu_download_firmware` + `start_firmware` (core.c), needs `rtl8188eufw.bin`.
+
+## v0.4.1 — Stage 3b-2: firmware download + start: PASS (2026-10-07)
+Hardware log:
+```
+firmware 15262 bytes, revision 28.0 signature 0x88e1
+initQueues: 2 bulk OUT, no low queue
+firmware RUNNING (0x00000000): FW_DL=0x000300c6
+```
+Pass = `firmware RUNNING`. (v0.4.0 failed in initQueues on the 2-OUT-endpoint dongle; fixed in v0.4.1.)
+Next (3c): LLT init, MAC/BB/RF init per `rtl8xxxu_init_device`; verify against source first.
