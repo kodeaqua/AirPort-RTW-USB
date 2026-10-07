@@ -96,3 +96,9 @@ Bundle: v0.8.1 (RFSW PAPE fix) + v0.9.0 (setChannel) + RX scan, none of 0.8.1/0.
 - Expected log: `rx_scan AP: ssid="..." ...` lines, per-channel `rx_scan chN: frames=.. mgmt=..`, and `rx_scan done`.
 - Reading results: frames=0 on every channel and only timeouts -> RX path/RF not working (check `rx_scan start: RCR/CR`).
   frames>0 but mgmt=0 -> descriptor offsets suspect. crc_bad dominating -> RF/channel/IQ-cal problem.
+
+### Hardware result (v0.10.0, 2026-10-07): PASS
+- init_wmac and set_channel (ch6=0xc06, ch11=0xc0b) match expected. 17 frames total, all mgmt, crc_bad=0, io_err=0, c2h=0 on all channels.
+- AP `Rumah 4G` (58:4b:bc:38:f8:90, ds_ch=11) heard on ch9-13 only (consistent with 20 MHz leakage of a ch11 AP); ch2-8 empty. Descriptor parsing, SSID/DS-channel parsing and channel switch are therefore validated.
+- Anomaly: `heard_on=1` is almost certainly a stale frame left in the RX FIFO from the previous ch11 (set_channel test). Fix: drain bulk IN after each setChannel before counting.
+- Open: only 1 unique AP; unknown whether other 2.4 GHz APs exist nearby or RX sensitivity is low (phy_iq_calibrate / set_crystal_cap still not done).

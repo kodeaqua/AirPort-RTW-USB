@@ -855,6 +855,8 @@ IOReturn RTL8188EUProbe::rxScan()
     for (int ch = 1; ch <= 13; ch++) {
         IOReturn r = setChannel(ch);
         if (r != kIOReturnSuccess) { IOLog(LOGP "rx_scan: setChannel(%d) failed 0x%08x\n", ch, r); continue; }
+        // Drop frames still queued from the previous channel (v0.10.0 showed a ch11 beacon attributed to ch1).
+        for (int d = 0; d < 16; d++) { uint32_t g = 0; if (_bulkIn->io(buf, kRxBufLen, g, 20) != kIOReturnSuccess) break; }
         uint32_t frames = 0, beacons = 0, crcBad = 0, c2h = 0, ioErr = 0, timeouts = 0;
         uint64_t startAbs, nowAbs, ns = 0;
         clock_get_uptime(&startAbs);
