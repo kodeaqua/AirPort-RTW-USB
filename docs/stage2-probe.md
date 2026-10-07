@@ -157,3 +157,19 @@ Hardware result (2026-10-07, v0.6.0): PASS. Log:
 `init_phy_bb OK (0x00000000): 0x800=0x80040000 0x804=0x00000003 0x808=0x0000fc00; rf_read(A,0x00) = 0x33e73`
 with `firmware RUNNING` and `init_mac OK` still present. The RF read returned a value (HSSI read path works);
 0x33e73 is informational only since the RF table is not written yet.
+
+## v0.7.0 — Stage 3c-3: init_phy_rf (radio A)
+Ports (verified against torvalds/linux master, fetched 2026-10-07):
+- `initPhyRf`: `rtl8xxxu_init_phy_rf` (core.c:2433) for RF_A: save `XA_RF_SW_CTRL` RFENV bit, set `XA_RF_INT_OE` bit 20 then bit 4,
+  clear 3WIRE addr-len (0x400) then data-len (0x800) in `XA_HSSI_PARM2`, write the table, restore RFENV bit.
+- Table writer = `rtl8xxxu_init_rf_regs` (core.c:2385): regs 0xfe/fd/fc/fb/fa/f9 are delays (50 ms/5 ms/1 ms/50 us/5 us/1 us),
+  `{0xff,0xffffffff}` terminates, 1 us after each write. `rtl8188eu_radioa_init_table` (8188e.c:215) generated mechanically
+  (95 entries + terminator).
+- `rfVerify` is OUR diagnostic, not in Linux: reads back the last-written value of every table register (20-bit mask).
+
+Expected new log line (after `init_phy_bb OK`):
+```
+init_phy_rf OK (0x00000000): verify ok: N regs read back, M mismatch (first: reg 0x.. got 0x.....)
+```
+Pass = `init_phy_rf OK` + `verify ok` with earlier lines intact. Mismatches are informational (some RF regs may not read back
+what was written); send the line either way. Next (3c-4): remaining WMAC/EDCA/beacon/aggregation/LLT/quirks block.

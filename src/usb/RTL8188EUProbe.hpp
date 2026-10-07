@@ -3,7 +3,8 @@
 // enumerate endpoints, chip ID and efuse (MAC) read. No firmware, no Wi-Fi.
 #pragma once
 
-struct Reg32Val;   // generated tables header, see RTL8188EUProbe.cpp
+struct Reg32Val;
+struct RfVal;   // generated tables header, see RTL8188EUProbe.cpp
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
@@ -55,6 +56,10 @@ private:
     IOReturn rfWrite(uint8_t reg, uint32_t data);
     IOReturn initPhyRegs(const Reg32Val *table);   // rtl8xxxu_init_phy_regs
     IOReturn initPhyBb();
+
+    // Stage 3c-3: rtl8xxxu_init_phy_rf (core.c:2433) with rtl8188eu_radioa_init_table, RF path A.
+    IOReturn initPhyRf();
+    IOReturn rfVerify(uint32_t *checked, uint32_t *mismatch, uint32_t *firstBadReg, uint32_t *firstBadGot);
 
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);

@@ -51,7 +51,7 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   `init_mac OK (0x00000000): MAX_AGGR_NUM=0x0707 0x428=0x0a 0x652=0x20` (all match expected).
 - **Stage 3c-2 (RF accessor + init_phy_bb): PASS on hardware (2026-10-07, v0.6.0).** log: `init_phy_bb OK (0x00000000):
   0x800=0x80040000 0x804=0x00000003 0x808=0x0000fc00; rf_read(A,0x00)=0x33e73` (RF read works; value informational).
-  Next: 3c-3 `init_phy_rf` (radio A table), see `docs/stage3c-init.md`.
+  Next: 3c-3 `init_phy_rf` (radio A table, v0.7.0 written, awaiting hardware test), see `docs/stage3c-init.md`.
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)

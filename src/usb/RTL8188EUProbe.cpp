@@ -48,6 +48,8 @@ enum {
     kRegFpgaXaHssiParm1 = 0x0820, kFpgaHssiParm1Pi = 1u << 8,
     kRegFpgaXaHssiParm2 = 0x0824, kHssiParm2AddrShift = 23, kHssiParm2AddrMask = 0x7f800000u,
     kHssiParm2EdgeRead = 1u << 31,
+    kRegFpgaXaRfIntOe = 0x0860, kRegFpgaXaRfSwCtrl = 0x0870, kFpgaRfRfEnv = 1u << 4,
+    kHssi3WireDataLen = 0x800, kHssi3WireAddrLen = 0x400,
     kRegFpgaXaLssiParm = 0x0840, kLssiParmAddrShift = 20, kLssiParmDataMask = 0x000fffff,
     kRegFpgaXaLssiReadback = 0x08a0, kRegHspiXaReadback = 0x08b8,
     kCrHciTxdma = 1u << 0, kCrHciRxdma = 1u << 1, kCrTxdma = 1u << 2, kCrRxdma = 1u << 3,
@@ -516,6 +518,80 @@ IOReturn RTL8188EUProbe::initPhyBb()
     return initPhyRegs(rtl8188e_agc_table);
 }
 
+// Port of rtl8xxxu_init_phy_rf (core.c:2433) for RF_A + rtl8xxxu_init_rf_regs (core.c:2385).
+// Table regs 0xf9..0xfe are delay markers (not register writes), {0xff,0xffffffff} terminates.
+IOReturn RTL8188EUProbe::initPhyRf()
+{
+    IOReturn r; uint16_t rfenv, v16; uint32_t v32;
+    if ((r = read16(kRegFpgaXaRfSwCtrl, &rfenv)) != kIOReturnSuccess) return r;
+    rfenv &= kFpgaRfRfEnv;
+    if ((r = read32(kRegFpgaXaRfIntOe, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpgaXaRfIntOe, v32 | (1u << 20))) != kIOReturnSuccess) return r;
+    IODelay(1);
+    if ((r = read32(kRegFpgaXaRfIntOe, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpgaXaRfIntOe, v32 | (1u << 4))) != kIOReturnSuccess) return r;
+    IODelay(1);
+    if ((r = read32(kRegFpgaXaHssiParm2, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpgaXaHssiParm2, v32 & ~(uint32_t)kHssi3WireAddrLen)) != kIOReturnSuccess) return r;
+    IODelay(1);
+    if ((r = read32(kRegFpgaXaHssiParm2, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpgaXaHssiParm2, v32 & ~(uint32_t)kHssi3WireDataLen)) != kIOReturnSuccess) return r;
+    IODelay(1);
+
+    for (uint32_t i = 0; ; i++) {
+        uint8_t reg = rtl8188eu_radioa_init_table[i].reg;
+        uint32_t val = rtl8188eu_radioa_init_table[i].val;
+        if (reg == 0xff && val == 0xffffffff) break;
+        switch (reg) {
+        case 0xfe: IOSleep(50); continue;
+        case 0xfd: IODelay(5000); continue;
+        case 0xfc: IODelay(1000); continue;
+        case 0xfb: IODelay(50); continue;
+        case 0xfa: IODelay(5); continue;
+        case 0xf9: IODelay(1); continue;
+        }
+        if ((r = rfWrite(reg, val)) != kIOReturnSuccess) {
+            IOLog(LOGP "initPhyRf: rfWrite(0x%02x, 0x%05x) failed 0x%08x\n", reg, val, r);
+            return r;
+        }
+        IODelay(1);
+    }
+
+    if ((r = read16(kRegFpgaXaRfSwCtrl, &v16)) != kIOReturnSuccess) return r;
+    v16 &= ~kFpgaRfRfEnv;
+    v16 |= rfenv;
+    return write16(kRegFpgaXaRfSwCtrl, v16);
+}
+
+// Diagnostic only (not in Linux): read back every RF register the table wrote and compare with the LAST value
+// written to it (masked to 20 bits). Some RF regs may legitimately read differently; the count is informational.
+IOReturn RTL8188EUProbe::rfVerify(uint32_t *checked, uint32_t *mismatch, uint32_t *firstBadReg, uint32_t *firstBadGot)
+{
+    *checked = 0; *mismatch = 0; *firstBadReg = 0xffff; *firstBadGot = 0;
+    for (uint32_t i = 0; ; i++) {
+        uint8_t reg = rtl8188eu_radioa_init_table[i].reg;
+        uint32_t val = rtl8188eu_radioa_init_table[i].val;
+        if (reg == 0xff && val == 0xffffffff) break;
+        if (reg >= 0xf9) continue;
+        bool last = true;                       // only verify the last write to each register
+        for (uint32_t j = i + 1; ; j++) {
+            uint8_t r2 = rtl8188eu_radioa_init_table[j].reg;
+            if (r2 == 0xff && rtl8188eu_radioa_init_table[j].val == 0xffffffff) break;
+            if (r2 == reg) { last = false; break; }
+        }
+        if (!last) continue;
+        uint32_t got = 0;
+        IOReturn r = rfRead(reg, &got);
+        if (r != kIOReturnSuccess) return r;
+        (*checked)++;
+        if (got != (val & 0xfffff)) {
+            if (*mismatch == 0) { *firstBadReg = reg; *firstBadGot = got; }
+            (*mismatch)++;
+        }
+    }
+    return kIOReturnSuccess;
+}
+
 bool RTL8188EUProbe::start(IOService *provider)
 {
     if (!super::start(provider)) return false;
@@ -603,6 +679,15 @@ bool RTL8188EUProbe::start(IOService *provider)
                             IOLog(LOGP "init_phy_bb %s (0x%08x): 0x800=0x%08x 0x804=0x%08x 0x808=0x%08x; rf_read(A,0x00) %s 0x%05x (informational, RF not initialised yet)\n",
                                   br == kIOReturnSuccess ? "OK" : "FAILED", br, bb800, bb804, bb808,
                                   rr == kIOReturnSuccess ? "=" : "FAILED", rf00);
+                            if (br == kIOReturnSuccess) {
+                                // Stage 3c-3: radio A table (Linux order: init_phy_bb -> init_phy_rf).
+                                IOReturn fr2 = initPhyRf();
+                                uint32_t chk = 0, bad = 0, badReg = 0, badGot = 0;
+                                IOReturn vr = (fr2 == kIOReturnSuccess) ? rfVerify(&chk, &bad, &badReg, &badGot) : fr2;
+                                IOLog(LOGP "init_phy_rf %s (0x%08x): verify %s: %u regs read back, %u mismatch (first: reg 0x%02x got 0x%05x)\n",
+                                      fr2 == kIOReturnSuccess ? "OK" : "FAILED", fr2,
+                                      vr == kIOReturnSuccess ? "ok" : "ERROR", chk, bad, badReg, badGot);
+                            }
                         }
                     }
                 }
