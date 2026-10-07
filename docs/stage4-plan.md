@@ -40,3 +40,10 @@ QoS, SEC_AES/RC4, short preamble, RTS/CTS-self, pt_stage 5, fallback 0x1ff00, cs
 Verified on host: mgmt descriptors are byte-identical to the previous inline code (hardware-proven); data cases checked by hand against the Linux source.
 Not ported: A-MPDU, HT40, SGI, TX report and rate adaptation (Linux data rate = ra_info.decision_rate, initial MCS7, adjusted from C2H reports).
 Hardware validation idea (not written yet): in async_selftest, send a data frame to a beacon-learned BSSID while unassociated; a deauth/disassoc reply to our MAC proves the data txdesc (class-3 frame response).
+
+## Status 2026-10-07 (core/probe split)
+`RTL8188EUProbe` was split: `src/usb/RTL8188EUCore.{hpp,cpp}` is now an `OSObject` that owns everything hardware-related
+(`attach(owner, iface)`, `bringUp()`, `closeAll()`, plus all register/TX/RX/link methods, now public), and `RTL8188EUProbe` is a thin IOService
+(`start` = alloc core, attach, bringUp, registerService). Log prefix `RTL8188EUProbe:` and behavior are unchanged, so the pending v0.14.0 run also
+confirms the refactor did not regress anything (init chain, `rx_scan`, `link_selftest`, `async_selftest` lines must be as in run 2).
+Purpose: the Wi-Fi frontend (WP5 provider) will own an `RTL8188EUCore` directly and expose it through `rtw88_core_ops` + an `ieee80211_hw`.

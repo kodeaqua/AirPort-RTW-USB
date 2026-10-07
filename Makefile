@@ -13,10 +13,10 @@ CXXF   := $(FLAGS) -fapple-kext -std=c++17 -DKERNEL -Wall -Wno-deprecated-declar
 .PHONY: usbprobe load unload install uninstall clean
 usbprobe: $(OUT)/Contents/MacOS/RTL8188EUProbe
 
-$(OUT)/Contents/MacOS/RTL8188EUProbe: $(OBJ)/RTL8188EUProbe.o $(OBJ)/kmod_info.o kext/RTL8188EUProbe.kext/Contents/Info.plist
+$(OUT)/Contents/MacOS/RTL8188EUProbe: $(OBJ)/RTL8188EUProbe.o $(OBJ)/RTL8188EUCore.o $(OBJ)/kmod_info.o kext/RTL8188EUProbe.kext/Contents/Info.plist
 	@mkdir -p $(dir $@)
 	xcrun clang++ -arch x86_64 -static -nostdlib -Xlinker -kext $(MKSDK)/Library/x86_64/libkmod.a \
-	    -Xlinker -undefined -Xlinker dynamic_lookup -o $@ $(OBJ)/RTL8188EUProbe.o $(OBJ)/kmod_info.o
+	    -Xlinker -undefined -Xlinker dynamic_lookup -o $@ $(OBJ)/RTL8188EUProbe.o $(OBJ)/RTL8188EUCore.o $(OBJ)/kmod_info.o
 	rsync -a --exclude=MacOS kext/RTL8188EUProbe.kext/ $(OUT)/
 	@echo "  OK   $(OUT)"
 
@@ -26,7 +26,10 @@ $(ROOT)/build/fw/rtl8188eu_fw.h:
 $(ROOT)/build/fw/rtl8188eu_tables.h: scripts/gen-rtl8188eu-tables.py
 	python3 -I scripts/gen-rtl8188eu-tables.py
 
-$(OBJ)/RTL8188EUProbe.o: src/usb/RTL8188EUProbe.cpp src/usb/RTL8188EUProbe.hpp $(ROOT)/build/fw/rtl8188eu_fw.h $(ROOT)/build/fw/rtl8188eu_tables.h
+$(OBJ)/RTL8188EUProbe.o: src/usb/RTL8188EUProbe.cpp src/usb/RTL8188EUProbe.hpp src/usb/RTL8188EUCore.hpp
+	@mkdir -p $(OBJ)
+	xcrun clang++ $(CXXF) -c $< -o $@
+$(OBJ)/RTL8188EUCore.o: src/usb/RTL8188EUCore.cpp src/usb/RTL8188EUCore.hpp src/usb/rtl8188eu_txdesc.h $(ROOT)/build/fw/rtl8188eu_fw.h $(ROOT)/build/fw/rtl8188eu_tables.h
 	@mkdir -p $(OBJ)
 	xcrun clang++ $(CXXF) -c $< -o $@
 $(OBJ)/kmod_info.o: src/usb/kmod_info.c
