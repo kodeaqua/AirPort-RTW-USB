@@ -84,6 +84,8 @@ private:
     IOReturn leaveBss();
     IOReturn setKeyCcmp(uint8_t keyidx, bool pairwise, const uint8_t *mac, const uint8_t *key16, uint8_t *hwIdx);
     IOReturn clearKey(uint8_t hwIdx);
+    IOReturn h2cCmd4(uint32_t data);
+    IOReturn reportConnect(uint8_t macid, bool connect);
     void     linkSelfTest();
     IOReturn txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq);
     IOReturn phyLcCalibrate();
@@ -102,6 +104,7 @@ private:
     IOBufferMemoryDescriptor *_ctlBuf = nullptr;
     IOBufferMemoryDescriptor *_blkBuf = nullptr;   // 196 bytes, writeN chunk
     bool                      _open   = false;
+    uint8_t                   _nextMbox = 0;
     uint32_t                  _camMap = 0;   // used security CAM entries
     uint8_t                   _efuse[512];   // EFUSE_MAP_LEN, logical map, 0xff = unprogrammed
 };

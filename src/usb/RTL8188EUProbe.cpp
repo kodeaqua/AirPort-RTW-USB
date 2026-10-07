@@ -140,6 +140,8 @@ enum {
     kRegSecurityCfg = 0x0680, kCrSecurityEnable = 1u << 9,
     kSecCfgTxUseDefkey = 1u << 0, kSecCfgRxUseDefkey = 1u << 1, kSecCfgTxSecEnable = 1u << 2,
     kSecCfgRxSecEnable = 1u << 3, kSecCfgTxbcUseDefkey = 1u << 6, kSecCfgRxbcUseDefkey = 1u << 7,
+    kRegHmtfr = 0x01cc, kRegHmbox0 = 0x01d0, kH2cMaxMbox = 4,
+    kH2cMediaStatusRpt = 0x01, kH2cRoleAp = 2,     // H2C_8723B_MEDIA_STATUS_RPT, H2C_MACID_ROLE_AP (rtl8xxxu.h:1357,1338)
     kMaxSecCam = 32,                 // fops->max_sec_cam_num for 8188eu
     kCipherCcmpLow = 0x4,            // WLAN_CIPHER_SUITE_CCMP 00-0F-AC:4 & 0x0f (cam_write "hack")
 };
@@ -984,7 +986,8 @@ IOReturn RTL8188EUProbe::joinBss(uint16_t aid)
     IOReturn r;
     if ((r = write8(kRegBcnMaxErr, 0xff)) != kIOReturnSuccess) return r;
     if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
-    return write16(kRegBcnPsrRpt, 0xc000 | aid);
+    if ((r = write16(kRegBcnPsrRpt, 0xc000 | aid)) != kIOReturnSuccess) return r;
+    return reportConnect(0, true);                       // report_connect(priv, 0, H2C_MACID_ROLE_AP, true)
 }
 
 // BSS_CHANGED_ASSOC, disassociated branch (core.c:4957).
@@ -992,7 +995,8 @@ IOReturn RTL8188EUProbe::leaveBss()
 {
     uint8_t v; IOReturn r = read8(kRegBeaconCtrl, &v);
     if (r != kIOReturnSuccess) return r;
-    return write8(kRegBeaconCtrl, v | kBeaconDisableTsfUpdate);
+    if ((r = write8(kRegBeaconCtrl, v | kBeaconDisableTsfUpdate)) != kIOReturnSuccess) return r;
+    return reportConnect(0, false);
 }
 
 // rtl8xxxu_set_key SET_KEY, CCMP only (core.c:6974-7041) + rtl8xxxu_cam_write (core.c:4454).
@@ -1064,7 +1068,38 @@ void RTL8188EUProbe::linkSelfTest()
     read32(kRegCamCmd, &camCmd2);
     IOLog(LOGP "link_selftest: set_key=0x%x (cam %u) set_key2=0x%x (cam %u) clear=0x%x/0x%x CAM_CMD after write=0x%08x after clear=0x%08x (bit31 should be 0) "
           "CR=0x%04x (bit9 security) SECCFG=0x%02x (expect 0xcf)\n", rk, hw, rk2, hw2, rc1, rc2, camCmd, camCmd2, cr, sec);
-    leaveBss(); setLinkType(kMsrLinkNone);
+    uint8_t hmtfr = 0xff; read8(kRegHmtfr, &hmtfr);
+    IOReturn rl = leaveBss();
+    IOLog(LOGP "link_selftest: join(+H2C media status)=0x%x leave(+H2C)=0x%x next_mbox=%u HMTFR=0x%02x (mailbox busy bits should clear)\n", rf, rl, _nextMbox, hmtfr);
+    setLinkType(kMsrLinkNone);
+}
+
+
+// rtl8xxxu_gen2_h2c_cmd for commands <= 4 bytes (core.c:1000): wait for the mailbox, write the 32-bit word, rotate mailbox.
+// Linux's wait loop (`while (retry--)` then `if (!retry)`) cannot detect a timeout; this one does.
+IOReturn RTL8188EUProbe::h2cCmd4(uint32_t data)
+{
+    const uint8_t mbox = _nextMbox;
+    uint8_t v = 0; bool ready = false;
+    for (int retry = 0; retry < 100; retry++) {
+        IOReturn r = read8(kRegHmtfr, &v);
+        if (r != kIOReturnSuccess) return r;
+        if (!(v & (1u << mbox))) { ready = true; break; }
+    }
+    if (!ready) return kIOReturnBusy;
+    IOReturn r = write32(kRegHmbox0 + mbox * 4, data);
+    if (r != kIOReturnSuccess) return r;
+    _nextMbox = (mbox + 1) % kH2cMaxMbox;
+    return kIOReturnSuccess;
+}
+
+// rtl8xxxu_gen2_report_connect (core.c:4630): H2C media status report. "The firmware turns on the rate control when it
+// knows it's connected" per the Linux comment, although 8188eu rate selection is done by the driver (ra_info), see docs.
+// Linux passes macid 0, role AP (we are the station, the peer is the AP).
+IOReturn RTL8188EUProbe::reportConnect(uint8_t macid, bool connect)
+{
+    const uint8_t parm = (connect ? 1 : 0) | ((kH2cRoleAp << 4) & 0xf0);
+    return h2cCmd4(kH2cMediaStatusRpt | ((uint32_t)parm << 8) | ((uint32_t)macid << 16));   // macid_end byte = 0
 }
 
 // Stage 4a: passive RX scan. Synchronous bulk IN, 20 MHz channels 1-13, no aggregation (init_aggregation cleared it).

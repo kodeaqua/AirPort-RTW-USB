@@ -122,3 +122,8 @@ set_basic_rates :4748, bss_info_changed ASSOC/PREAMBLE/SLOT/BSSID :4883, set_aif
 - `linkSelfTest()` runs after rx_scan: writes the registers with made-up BSSID/key and reads back. Expected log lines start with `link_selftest:`;
   expected values are printed in the line (MSR 0x02, BSSID 02:11:22:33:44:55, INIRTS 4, SLOT 9, BCN_PSR_RPT 0xc001, SECCFG 0xcf, CAM_CMD bit31 clear after clear).
   The selftest does not verify the key contents in CAM (no read-back path ported); that is proven only by a real WPA2 handshake.
+
+### 4c addendum (v0.12.1): H2C media status
+- `h2cCmd4()` = `rtl8xxxu_gen2_h2c_cmd` for <=4-byte commands (core.c:1000); `reportConnect()` = gen2_report_connect (core.c:4630), cmd 0x01, parm = connect | role AP(2)<<4, macid 0.
+  `joinBss()`/`leaveBss()` now call it. Finding: on 8188eu rate adaptation is driver-side (`rtl8188e_update_rate_mask` only stores the mask into `ra_info`, 8188e.c:1780),
+  so there is no rate-mask H2C to port; data frames need a driver-chosen rate in txdw5 (ra->decision_rate, default MCS7 per rtl8188e_ra_info_init_all).
