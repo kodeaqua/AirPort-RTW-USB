@@ -31,6 +31,17 @@ enum {
     kEfuseMapLen      = 512,    // EFUSE_MAP_LEN == EFUSE_REAL_CONTENT_LEN_8723A
     kEfuseMaxWordUnit = 4,
     kMaxRegPoll       = 500,    // RTL8XXXU_MAX_REG_POLL
+    // Stage 3b power_on (8188e.c rtl8188e_disabled_to_emu / emu_to_active / rtl8188eu_power_on)
+    kRegApsFsmco      = 0x0004,
+    kFsmcoMacEnable   = 1u << 8, kFsmcoHwSuspend = 1u << 11, kFsmcoPcie = 1u << 12,
+    kFsmcoHwPowerdown = 1u << 15, kFsmcoPowerReady = 1u << 17,   // BIT(17) written as literal in 8188e.c
+    kSysFuncBbrstb    = 1u << 0, kSysFuncBbGlbRstn = 1u << 1,
+    kRegAfeXtalCtrl   = 0x0024, kAfeXtalSchmitt = 1u << 23,
+    kRegLpldoCtrl     = 0x0023, kLpldoSleep = 1u << 4,
+    kRegCr            = 0x0100,
+    kCrHciTxdma = 1u << 0, kCrHciRxdma = 1u << 1, kCrTxdma = 1u << 2, kCrRxdma = 1u << 3,
+    kCrProtocol = 1u << 4, kCrSchedule = 1u << 5, kCrSecurity = 1u << 9, kCrCaltimer = 1u << 10,
+    kSysClkMacClkEnable = 1u << 11,
     // struct rtl8188eu_efuse (rtl8xxxu.h)
     kEfuseRtlId       = 0x8129, kEfuseOffMac = 0xD7,
 };
@@ -172,6 +183,64 @@ void RTL8188EUProbe::logEfuse()
     }
 }
 
+// Port of rtl8188eu_power_on (8188e.c). Does NOT touch TX/RX MAC enable (hw bug note in source).
+IOReturn RTL8188EUProbe::powerOn()
+{
+    uint16_t v16; uint32_t v32 = 0; uint8_t v8;
+    IOReturn r;
+    #define TRY(x) do { r = (x); if (r != kIOReturnSuccess) { IOLog(LOGP "powerOn: %s failed 0x%08x\n", #x, r); return r; } } while (0)
+
+    // rtl8188e_disabled_to_emu
+    TRY(read16(kRegApsFsmco, &v16));
+    v16 &= ~(kFsmcoHwSuspend | kFsmcoPcie);
+    TRY(write16(kRegApsFsmco, v16));
+
+    // rtl8188e_emu_to_active: wait 0x04[17] power ready
+    int count;
+    for (count = kMaxRegPoll; count; count--) {
+        TRY(read32(kRegApsFsmco, &v32));
+        if (v32 & kFsmcoPowerReady) break;
+        IODelay(10);
+    }
+    if (!count) { IOLog(LOGP "powerOn: power-ready (0x04[17]) timeout, FSMCO=0x%08x\n", v32); return kIOReturnTimeout; }
+
+    TRY(read8(kRegSysFunc, &v8));                       // reset baseband
+    v8 &= ~(kSysFuncBbrstb | kSysFuncBbGlbRstn);
+    TRY(write8(kRegSysFunc, v8));
+
+    TRY(read32(kRegAfeXtalCtrl, &v32));                 // schmitt trigger
+    v32 |= kAfeXtalSchmitt;
+    TRY(write32(kRegAfeXtalCtrl, v32));
+
+    TRY(read16(kRegApsFsmco, &v16));                    // disable HWPDN
+    v16 &= ~kFsmcoHwPowerdown;
+    TRY(write16(kRegApsFsmco, v16));
+
+    TRY(read16(kRegApsFsmco, &v16));                    // disable WL suspend
+    v16 &= ~(kFsmcoHwSuspend | kFsmcoPcie);
+    TRY(write16(kRegApsFsmco, v16));
+
+    TRY(read32(kRegApsFsmco, &v32));                    // set MAC_ENABLE, poll until it clears
+    v32 |= kFsmcoMacEnable;
+    TRY(write32(kRegApsFsmco, v32));
+    for (count = kMaxRegPoll; count; count--) {
+        TRY(read32(kRegApsFsmco, &v32));
+        if (!(v32 & kFsmcoMacEnable)) break;
+        IODelay(10);
+    }
+    if (!count) { IOLog(LOGP "powerOn: MAC_ENABLE did not clear, FSMCO=0x%08x\n", v32); return kIOReturnTimeout; }
+
+    TRY(read8(kRegLpldoCtrl, &v8));                     // LDO normal mode
+    v8 &= ~kLpldoSleep;
+    TRY(write8(kRegLpldoCtrl, v8));
+
+    v16 = kCrHciTxdma | kCrHciRxdma | kCrTxdma | kCrRxdma |
+          kCrProtocol | kCrSchedule | kCrSecurity | kCrCaltimer;
+    TRY(write16(kRegCr, v16));
+    #undef TRY
+    return kIOReturnSuccess;
+}
+
 bool RTL8188EUProbe::init(OSDictionary *dict)
 {
     IOLog(LOGP "init (personality matched)\n");
@@ -239,7 +308,16 @@ bool RTL8188EUProbe::start(IOService *provider)
         if (!(sysCfg & kSysCfgTrpVauxEn) && cut != 8) {
             IOReturn er = efuseReadAll();
             if (er != kIOReturnSuccess) IOLog(LOGP "efuse read failed: 0x%08x\n", er);
-            else logEfuse();
+            else {
+                logEfuse();
+                // Stage 3b-1: MAC power-on only (no firmware yet).
+                IOReturn pr = powerOn();
+                uint16_t cr = 0, clkr = 0; uint32_t fsmco = 0;
+                read16(kRegCr, &cr); read16(kRegSysClkr, &clkr); read32(kRegApsFsmco, &fsmco);
+                IOLog(LOGP "power_on %s (0x%08x): CR=0x%04x SYS_CLKR=0x%04x (MAC_CLK %s) APS_FSMCO=0x%08x\n",
+                      pr == kIOReturnSuccess ? "OK" : "FAILED", pr, cr, clkr,
+                      (clkr & kSysClkMacClkEnable) ? "on" : "OFF", fsmco);
+            }
         }
     }
 

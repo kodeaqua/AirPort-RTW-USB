@@ -31,6 +31,10 @@ private:
     IOReturn read32(uint16_t addr, uint32_t *v) { return regRead(addr, v, 4); }
     IOReturn write8(uint16_t addr, uint8_t v)   { return regWrite(addr, &v, 1); }
     IOReturn write16(uint16_t addr, uint16_t v) { return regWrite(addr, &v, 2); }
+    IOReturn write32(uint16_t addr, uint32_t v) { return regWrite(addr, &v, 4); }
+
+    // Port of rtl8188eu_power_on (8188e.c). Stage 3b-1.
+    IOReturn powerOn();
 
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);

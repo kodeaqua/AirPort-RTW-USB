@@ -92,3 +92,17 @@ efuse MAC 50:3d:d1:6d:14:6a
 ```
 Efuse bytes 0xD0..0xD3 = `da 0b 79 81` (VID 0bda, PID 8179), matches `ioreg -p IOUSB`.
 Efuse read ~430 ms (00.5299 -> 01.9570), acceptable for a one-time probe.
+
+## v0.3.0 — Stage 3b-1: MAC power_on only (no firmware)
+Ported from Linux `rtl8xxxu` `8188e.c` (`rtl8188e_disabled_to_emu`, `rtl8188e_emu_to_active`,
+`rtl8188eu_power_on`), fetched from torvalds/linux master 2026-10-07. Runs after the efuse dump.
+Writes: APS_FSMCO (0x04), SYS_FUNC (0x02), AFE_XTAL_CTRL (0x24), LPLDO_CTRL (0x23), CR (0x100).
+Does not set MAC TX/RX enable (source notes a 8188E hw bug), no firmware, no queue init.
+
+Expected new log line:
+```
+power_on OK (0x00000000): CR=0x06ff? SYS_CLKR=0x.... (MAC_CLK on) APS_FSMCO=0x........
+```
+(CR value is not predicted; the point is OK + MAC_CLK on.) Pass = `power_on OK` and `MAC_CLK on`.
+If FAILED: send the `powerOn:` lines (they name the step and FSMCO value). Do not proceed to firmware.
+Next (3b-2): `rtl8xxxu_download_firmware` + `start_firmware` (core.c), needs `rtl8188eufw.bin`.
