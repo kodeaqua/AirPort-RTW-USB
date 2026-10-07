@@ -1032,17 +1032,19 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxBuffers);
         if (self->parseRx((const uint8_t *)slot->buf->getBytesNoCopy(), bytes, &ri)) {
             OSIncrementAtomic((volatile SInt32 *)&self->_stRxFrames);
-            // v0.15.6 diagnostic: RCR has no AAP, so every unicast data frame heard is addressed to us (M1 included).
-            // Log the first 60 with QoS-aware LLC ethertype; count them all for the stats line.
-            if (ri.len >= 24 && (ri.frame[0] & 0x0c) == 0x08 && !(ri.frame[4] & 1)) {
-                static volatile SInt32 nData;
+            // v0.16.0 diagnostic: any unicast frame heard (mgmt or data) is addressed to us (RCR has no AAP). Log type/subtype,
+            // RETRY bit and seq: a retransmitted assoc response or M1 means the AP never saw our ACK; a first-time M1 with
+            // ethertype 0x888e means the frame reached the host and the loss is further up.
+            if (ri.len >= 24 && (ri.frame[0] & 0x0c) != 0x04 && (ri.frame[0] & 0xfc) != 0x50 && !(ri.frame[4] & 1)) {
+                static volatile SInt32 nUc;
                 OSIncrementAtomic((volatile SInt32 *)&self->_stRxUcData);
-                SInt32 n = OSIncrementAtomic(&nData);
-                if (n < 60) {
+                SInt32 n = OSIncrementAtomic(&nUc);
+                if (n < 100) {
+                    bool data = (ri.frame[0] & 0x0c) == 0x08;
                     uint32_t hl = (ri.frame[0] & 0x80) ? 26 : 24;
-                    unsigned et = ri.len >= hl + 8 ? ((unsigned)ri.frame[hl + 6] << 8 | ri.frame[hl + 7]) : 0;
-                    IOLog(LOGP "rx UCDATA #%d: fc=%02x%02x len=%u a2=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%04x dec=%d\n",
-                          (int)n, ri.frame[0], ri.frame[1], ri.len,
+                    unsigned et = data && ri.len >= hl + 8 ? ((unsigned)ri.frame[hl + 6] << 8 | ri.frame[hl + 7]) : 0;
+                    IOLog(LOGP "rx UC #%d: fc=%02x%02x retry=%d seq=%u len=%u a2=%02x:%02x:%02x:%02x:%02x:%02x ethertype=0x%04x dec=%d\n",
+                          (int)n, ri.frame[0], ri.frame[1], (ri.frame[1] >> 3) & 1, (unsigned)((ri.frame[22] | ri.frame[23] << 8) >> 4), ri.len,
                           ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], et, (int)ri.decrypted);
                 }
             }
@@ -1304,7 +1306,16 @@ IOReturn RTL8188EUCore::joinBss(uint16_t aid)
     if ((r = write8(kRegBcnMaxErr, 0xff)) != kIOReturnSuccess) return r;
     if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
     if ((r = write16(kRegBcnPsrRpt, 0xc000 | aid)) != kIOReturnSuccess) return r;
-    return reportConnect(0, true);                       // report_connect(priv, 0, H2C_MACID_ROLE_AP, true)
+    r = reportConnect(0, true);                          // report_connect(priv, 0, H2C_MACID_ROLE_AP, true)
+    {   // v0.16.0 diagnostic: state that decides whether hardware ACKs the AP (MACID/BSSID/RRSR/SIFS/RCR/MSR/BCN_CTRL/SECCFG).
+        uint32_t macid = 0, bss0 = 0, rrsr = 0, rcr = 0, sifs = 0; uint16_t macid1 = 0, bss1 = 0; uint8_t msr = 0, bcn = 0, sec = 0;
+        read32(0x0610, &macid); read16(0x0614, &macid1); read32(kRegBssid, &bss0); read16(kRegBssid + 4, &bss1);
+        read32(kRegResponseRateSet, &rrsr); read32(kRegRcr, &rcr); read32(0x063c, &sifs);
+        read8(kRegMsr, &msr); read8(kRegBeaconCtrl, &bcn); read8(kRegSecurityCfg, &sec);
+        IOLog(LOGP "join aid=%u rc=0x%x: MACID=%08x:%04x BSSID=%08x:%04x RRSR=0x%08x RESP_SIFS=0x%08x RCR=0x%08x MSR=0x%02x BCN_CTRL=0x%02x SECCFG=0x%02x\n",
+              aid, (unsigned)r, macid, macid1, bss0, bss1, rrsr, sifs, rcr, msr, bcn, sec);
+    }
+    return r;
 }
 
 // BSS_CHANGED_ASSOC, disassociated branch (core.c:4957).
