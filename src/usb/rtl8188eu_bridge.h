@@ -15,7 +15,7 @@
 extern "C" {
 #endif
 
-typedef void (*rtl8188eu_rx_fn)(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted);
+typedef void (*rtl8188eu_rx_fn)(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted, bool has_signal, int8_t signal_dbm);
 typedef void (*rtl8188eu_txdone_fn)(void *ctx, void *cookie, int status);
 
 /* Provider side (implemented in RTL8188EUBridge.cpp; void* = IOService* / RTL8188EUCore*). */

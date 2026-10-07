@@ -56,7 +56,7 @@ static void r8_rx_work(struct work_struct *w)
 }
 
 /* Runs on the USB workloop: must not sleep. Copy and defer. */
-static void r8_rx_cb(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted)
+static void r8_rx_cb(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted, bool has_signal, int8_t signal_dbm)
 {
     struct sk_buff *skb;
     struct ieee80211_rx_status *rxs;
@@ -71,7 +71,10 @@ static void r8_rx_cb(void *ctx, const uint8_t *frame, uint32_t len, bool decrypt
     memset(rxs, 0, sizeof(*rxs));
     rxs->freq = (u16)(2407 + 5 * g_r8.cur_ch);
     rxs->band = NL80211_BAND_2GHZ;
-    rxs->flag = RX_FLAG_NO_SIGNAL_VAL;       /* phystats/RSSI not ported yet (deferred in CLAUDE.md) */
+    if (has_signal)
+        rxs->signal = signal_dbm;            /* from phystats, see RTL8188EUCore::parseRx */
+    else
+        rxs->flag = RX_FLAG_NO_SIGNAL_VAL;
     if (decrypted)
         rxs->flag |= RX_FLAG_DECRYPTED;
     skb_queue_tail(&g_r8.rxq, skb);

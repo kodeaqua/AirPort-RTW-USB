@@ -1011,7 +1011,7 @@ void RTL8188EUCore::txCompleteTramp(void *owner, void *param, IOReturn status, u
 // Parse one bulk IN buffer (rxdesc16, no aggregation); same layout as rxScan. Returns false if there is no 802.11 frame.
 bool RTL8188EUCore::parseRx(const uint8_t *b, uint32_t got, RxInfo *out)
 {
-    out->frame = nullptr; out->len = 0; out->crcBad = false; out->c2h = false; out->decrypted = false;
+    out->frame = nullptr; out->len = 0; out->crcBad = false; out->c2h = false; out->decrypted = false; out->hasSignal = false; out->signal = 0;
     if (got < 24) return false;
     const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12);
     uint32_t pktLen = dw0 & 0x3fff, drv = ((dw0 >> 16) & 0xf) * 8, shift = (dw0 >> 24) & 3;
@@ -1022,6 +1022,20 @@ bool RTL8188EUCore::parseRx(const uint8_t *b, uint32_t got, RxInfo *out)
     out->frame = b + off; out->len = pktLen;
     // rtl8xxxu_rxdesc16: security = dw0[22:20], swdec = dw0[27]; core.c:6405 sets RX_FLAG_DECRYPTED when !swdec && security != 0.
     out->decrypted = !(dw0 & (1u << 27)) && ((dw0 >> 20) & 7) != 0;
+    // v0.17.0 RSSI. rtl8xxxu rtl8723au_rx_parse_phystats (core.c:5685): rxmcs = dw3[5:0]; rxmcs < DESC_RATE_6M (0x04) is CCK, signal =
+    // cck_rssi() (8188e.c:1309, TSMC table since cut != I); else signal = (pwdb_all >> 1) - 110. phy_stats = dw0[26], struct
+    // rtl8723au_phy_stats at b+24: pwdb_all = byte 4, cck_agc_rpt = byte 5 (needs drvinfo >= 8 bytes).
+    if ((dw0 & (1u << 26)) && drv >= 8) {
+        static const int8_t kLnaGain[8] = {29, 20, 12, 3, -6, -15, -24, -33};   // lna_gain_table_1
+        const uint8_t *ps = b + 24;
+        if ((dw3 & 0x3f) < 0x04) {
+            uint8_t rpt = ps[5];
+            out->signal = (int8_t)(kLnaGain[rpt >> 5] - 2 * (rpt & 0x1f));
+        } else {
+            out->signal = (int8_t)((ps[4] >> 1) - 110);
+        }
+        out->hasSignal = true;
+    }
     return true;
 }
 
@@ -1051,7 +1065,7 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
                           ri.frame[10], ri.frame[11], ri.frame[12], ri.frame[13], ri.frame[14], ri.frame[15], et, (int)ri.decrypted);
                 }
             }
-            if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted);
+            if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted, ri.hasSignal, ri.signal);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
         else if (ri.c2h) OSIncrementAtomic((volatile SInt32 *)&self->_stRxC2h);

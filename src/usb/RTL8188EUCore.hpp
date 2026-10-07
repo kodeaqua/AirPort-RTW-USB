@@ -97,9 +97,9 @@ public:
     // Stage 4d: async engine. Callbacks run on the USB workloop; keep them short and non-blocking.
     typedef void (*RxCallback)(void *ctx, const uint8_t *frame, uint32_t len);       // one received 802.11 frame (no FCS)
     typedef void (*TxDoneCallback)(void *ctx, void *cookie, IOReturn status);
-    struct RxInfo { const uint8_t *frame; uint32_t len; bool crcBad; bool c2h; bool decrypted; };
+    struct RxInfo { const uint8_t *frame; uint32_t len; bool crcBad; bool c2h; bool decrypted; bool hasSignal; int8_t signal; };
     // Frontend RX hook (preferred over _rxCb when set): decrypted = !swdec && security != NONE (rtl8xxxu core.c:6405).
-    typedef void (*RxCallbackEx)(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted);
+    typedef void (*RxCallbackEx)(void *ctx, const uint8_t *frame, uint32_t len, bool decrypted, bool hasSignal, int8_t signal);
     struct RxSlot { IOBufferMemoryDescriptor *buf; };
     struct TxSlot { IOBufferMemoryDescriptor *buf; void *cookie; };
     static bool parseRx(const uint8_t *b, uint32_t got, RxInfo *out);
