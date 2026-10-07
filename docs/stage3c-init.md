@@ -86,3 +86,13 @@ Ported from `build/src/core.c` (init_device 3958+), `8188e.c`, `8188f.c`; all co
   Writes BW_OPMODE 20MHz, clears FPGA0/FPGA1 RF_MODE bit0, RF18 channel (mask 0x3ff) then BW bits (10|11).
 - Probe switches to ch6 then ch11 and logs `set_channel OK ...: RF18[11:0] ch6=0xc06 ch11=0xc0b` (expected values are my computation, not observed).
 - Not done: 40 MHz, phy_iq_calibrate, RX path (bulk IN), TX.
+
+## 4a: passive RX scan (v0.10.0, written 2026-10-07, awaiting hardware test)
+Bundle: v0.8.1 (RFSW PAPE fix) + v0.9.0 (setChannel) + RX scan, none of 0.8.1/0.9.0 tested separately yet.
+- `rxScan()`: channels 1-13 at 20 MHz, 350 ms dwell each (~4.5 s, blocks `start()`), synchronous bulk IN (4096-byte buffer, 100 ms io timeout).
+- Parses rxdesc16 (24 bytes; bit positions derived from the LE bitfield layout in rtl8xxxu.h:135, NOT observed yet). Skips rpt_sel!=0 (C2H)
+  and crc32 errors. Logs beacons/probe responses: SSID (tag 0), BSSID (addr3), DS channel (tag 3). Aggregated URBs (pkt_cnt>1) are not walked;
+  aggregation is disabled by init_aggregation so this should not occur.
+- Expected log: `rx_scan AP: ssid="..." ...` lines, per-channel `rx_scan chN: frames=.. mgmt=..`, and `rx_scan done`.
+- Reading results: frames=0 on every channel and only timeouts -> RX path/RF not working (check `rx_scan start: RCR/CR`).
+  frames>0 but mgmt=0 -> descriptor offsets suspect. crc_bad dominating -> RF/channel/IQ-cal problem.

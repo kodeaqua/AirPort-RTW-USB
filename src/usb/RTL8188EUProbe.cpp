@@ -2,6 +2,8 @@
 // RTL8188EUProbe.cpp — see header. Register constants are from Linux
 // drivers/net/wireless/realtek/rtl8xxxu/{rtl8xxxu.h,regs.h} (verified 2026-10-07).
 
+#include <kern/clock.h>
+#include <libkern/OSByteOrder.h>
 #include "RTL8188EUProbe.hpp"
 #include <IOKit/IOLib.h>
 #include <IOKit/usb/StandardUSB.h>
@@ -835,6 +837,72 @@ IOReturn RTL8188EUProbe::setChannel(int channel)
     return kIOReturnSuccess;
 }
 
+// Stage 4a: passive RX scan. Synchronous bulk IN, 20 MHz channels 1-13, no aggregation (init_aggregation cleared it).
+// rtl8xxxu_rxdesc16 (rtl8xxxu.h:135) is 6 dwords = 24 bytes; bit positions below are derived from that LE bitfield layout:
+//   dw0: pktlen[13:0] crc32[14] icverr[15] drvinfo_sz[19:16] shift[25:24] phy_stats[26]
+//   dw2: pkt_cnt[23:16]   dw3: rpt_sel[15:14]
+// Frame starts at 24 + drvinfo_sz*8 + shift (parse_rxdesc16, core.c:6320). Aggregated URBs (pkt_cnt > 1) are not walked.
+IOReturn RTL8188EUProbe::rxScan()
+{
+    enum { kRxBufLen = 4096, kDwellMs = 350, kMaxAps = 32 };
+    if (!_bulkIn) return kIOReturnNotReady;
+    IOBufferMemoryDescriptor *buf = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionIn, kRxBufLen, 4);
+    if (!buf) return kIOReturnNoMemory;
+    uint8_t *b = (uint8_t *)buf->getBytesNoCopy();
+    struct Ap { uint8_t bssid[6]; char ssid[33]; uint8_t ds; uint8_t seenCh; } aps[kMaxAps];
+    uint32_t nAps = 0, totalFrames = 0;
+
+    for (int ch = 1; ch <= 13; ch++) {
+        IOReturn r = setChannel(ch);
+        if (r != kIOReturnSuccess) { IOLog(LOGP "rx_scan: setChannel(%d) failed 0x%08x\n", ch, r); continue; }
+        uint32_t frames = 0, beacons = 0, crcBad = 0, c2h = 0, ioErr = 0, timeouts = 0;
+        uint64_t startAbs, nowAbs, ns = 0;
+        clock_get_uptime(&startAbs);
+        while (ns < (uint64_t)kDwellMs * 1000000ull) {
+            uint32_t got = 0;
+            IOReturn ir = _bulkIn->io(buf, kRxBufLen, got, 100);
+            clock_get_uptime(&nowAbs);
+            absolutetime_to_nanoseconds(nowAbs - startAbs, &ns);
+            if (ir == kIOReturnTimeout) { timeouts++; continue; }
+            if (ir != kIOReturnSuccess) { ioErr++; if (ioErr > 3) break; continue; }
+            if (got < 24) continue;
+            const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12);
+            uint32_t pktLen = dw0 & 0x3fff, drv = ((dw0 >> 16) & 0xf) * 8, shift = (dw0 >> 24) & 3;
+            if (((dw3 >> 14) & 3) != 0) { c2h++; continue; }          // rpt_sel != 0: C2H report, not a frame
+            frames++;
+            if (dw0 & (1u << 14)) { crcBad++; continue; }              // crc32 error
+            uint32_t off = 24 + drv + shift;
+            if (pktLen < 36 || off + pktLen > got) continue;
+            const uint8_t *f = b + off;
+            if ((f[0] & 0xfc) != 0x80 && (f[0] & 0xfc) != 0x50) continue;   // beacon / probe response only
+            beacons++;
+            const uint8_t *bssid = f + 16;
+            char ssid[33] = {0}; uint8_t ds = 0;
+            for (uint32_t i = 36; i + 2 <= pktLen; ) {
+                uint8_t tag = f[i], len = f[i + 1];
+                if (i + 2 + len > pktLen) break;
+                if (tag == 0) { uint8_t n = len > 32 ? 32 : len; for (uint8_t k = 0; k < n; k++) ssid[k] = (f[i+2+k] >= 32 && f[i+2+k] < 127) ? f[i+2+k] : '?'; }
+                else if (tag == 3 && len == 1) ds = f[i + 2];
+                i += 2 + len;
+            }
+            bool known = false;
+            for (uint32_t k = 0; k < nAps; k++) if (!memcmp(aps[k].bssid, bssid, 6)) { known = true; break; }
+            if (!known && nAps < kMaxAps) {
+                memcpy(aps[nAps].bssid, bssid, 6); memcpy(aps[nAps].ssid, ssid, 33); aps[nAps].ds = ds; aps[nAps].seenCh = (uint8_t)ch;
+                nAps++;
+                IOLog(LOGP "rx_scan AP: ssid=\"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x ds_ch=%u heard_on=%d\n",
+                      ssid, bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], ds, ch);
+            }
+        }
+        totalFrames += frames;
+        IOLog(LOGP "rx_scan ch%d: frames=%u mgmt(beacon/probe)=%u crc_bad=%u c2h=%u timeouts=%u io_err=%u\n",
+              ch, frames, beacons, crcBad, c2h, timeouts, ioErr);
+    }
+    buf->release();
+    IOLog(LOGP "rx_scan done: %u frames total, %u unique AP(s)\n", totalFrames, nAps);
+    return kIOReturnSuccess;
+}
+
 IOReturn RTL8188EUProbe::phyLcCalibrate()
 {
     IOReturn r; uint32_t lstf, rfAmode = 0, v32;
@@ -1007,6 +1075,13 @@ bool RTL8188EUProbe::start(IOService *provider)
                                             IOReturn c2 = setChannel(11); rfRead(kRf6052RegModeAg, &b);
                                             IOLog(LOGP "set_channel %s (0x%08x/0x%08x): RF18[11:0] ch6=0x%03x (expect 0xc06) ch11=0x%03x (expect 0xc0b)\n",
                                                   (c1 == kIOReturnSuccess && c2 == kIOReturnSuccess) ? "OK" : "FAILED", c1, c2, a & 0xfff, b & 0xfff);
+                                            if (c1 == kIOReturnSuccess && c2 == kIOReturnSuccess) {
+                                                uint32_t rc = 0, cr3 = 0;
+                                                read32(kRegRcr, &rc); read32(kRegCr, &cr3);
+                                                IOLog(LOGP "rx_scan start: RCR=0x%08x CR=0x%08x\n", rc, cr3);
+                                                IOReturn xr = rxScan();
+                                                IOLog(LOGP "rx_scan returned 0x%08x\n", xr);
+                                            }
                                         }
                                     }
                                 }
