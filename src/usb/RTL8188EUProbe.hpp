@@ -44,6 +44,9 @@ private:
     IOReturn fwStart();          // rtl8xxxu_start_firmware
     IOReturn loadFirmware();     // header check + initQueues + download (6 tries) + start
 
+    // Stage 3c-1: port of rtl8xxxu_init_mac (core.c:2187), see docs/stage3c-init.md.
+    IOReturn initMac();
+
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);
     IOReturn efuseReadAll();
