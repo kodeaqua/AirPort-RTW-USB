@@ -953,6 +953,7 @@ IOReturn RTL8188EUCore::txSubmitFrame(const uint8_t *frame, uint16_t len, const 
     }
     // v0.15.3 diagnostics (caller context, so sync control reads are safe): on the first TX timeout dump the TX page/DMA regs
     // and abort the wedged pipes; every 256 submissions print the RX counters (does RX reach the core at all?).
+    if (_rptTimePending) { _rptTimePending = 0; (void)write16(kRegTxReportTime, (uint16_t)_rptTimeNew); }   // queued by handleTxReport()
     if (_txDumpPending) {
         _txDumpPending = 0;
         uint32_t rq = 0, nq = 0, ck = 0, ds = 0; uint8_t pz = 0; uint16_t cr = 0;
@@ -1098,7 +1099,7 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
             if (self->_rxCbEx) self->_rxCbEx(self->_cbCtx, ri.frame, ri.len, ri.decrypted, ri.hasSignal, ri.signal);
             else if (self->_rxCb) self->_rxCb(self->_cbCtx, ri.frame, ri.len);
         } else if (ri.crcBad) OSIncrementAtomic((volatile SInt32 *)&self->_stRxCrcBad);
-        else if (ri.c2h) OSIncrementAtomic((volatile SInt32 *)&self->_stRxC2h);
+        else if (ri.c2h) { OSIncrementAtomic((volatile SInt32 *)&self->_stRxC2h); self->handleTxReport((const uint8_t *)slot->buf->getBytesNoCopy(), bytes); }
     } else if (status != kIOReturnAborted) {
         OSIncrementAtomic((volatile SInt32 *)&self->_stRxErrors);
         self->_rxConsecErr++;
@@ -1111,18 +1112,57 @@ void RTL8188EUCore::rxCompleteTramp(void *owner, void *param, IOReturn status, u
     OSDecrementAtomic(&self->_rxOutstanding);
 }
 
-// GUESS (no TX report / RA yet): conservative RSSI->rate map, about 15-20 dB above typical OFDM sensitivity (54M ~ -74 dBm,
-// 36M ~ -80, 24M ~ -83, 12M ~ -88). Unknown RSSI, group-addressed frames and anything weak stay at the proven 6M.
-uint8_t RTL8188EUCore::pickDataRate(const uint8_t *frame) const
+// GUESS (thresholds): RSSI->rate map used only as the START rate of the rate adaptation and before any RSSI is known.
+// ~15-20 dB above typical OFDM sensitivity (54M ~ -74 dBm, 36M ~ -80, 24M ~ -83, 12M ~ -88); unknown RSSI stays at the proven 6M.
+static uint8_t rssiStartRate(int rssiDbm, bool known)
 {
-    if (rtl8188eu_tx::daIsGroup(rtl8188eu_tx::getDA(frame))) return rtl8188eu_tx::kRate6M;
-    int rssi = _rssiX8 / 8;
-    if (_rssiX8 == 0) return rtl8188eu_tx::kRate6M;
-    if (rssi >= -58) return rtl8188eu_tx::kRate54M;
-    if (rssi >= -64) return rtl8188eu_tx::kRate36M;
-    if (rssi >= -70) return rtl8188eu_tx::kRate24M;
-    if (rssi >= -76) return rtl8188eu_tx::kRate12M;
+    if (!known) return rtl8188eu_tx::kRate6M;
+    if (rssiDbm >= -58) return rtl8188eu_tx::kRate54M;
+    if (rssiDbm >= -64) return rtl8188eu_tx::kRate36M;
+    if (rssiDbm >= -70) return rtl8188eu_tx::kRate24M;
+    if (rssiDbm >= -76) return rtl8188eu_tx::kRate12M;
     return rtl8188eu_tx::kRate6M;
+}
+
+// Unicast data rate. After the first RSSI sample the software RA (rtl8188eu_ra.h, port of rtl8xxxu 8188e.c) owns the rate and is
+// fed by TX reports (rpt_sel=2) in handleTxReport(); group-addressed frames stay at 6M. Called from the TX path only.
+uint8_t RTL8188EUCore::pickDataRate(const uint8_t *frame, uint8_t *ptStage)
+{
+    *ptStage = rtl8188eu_tx::kPtStageInit;
+    if (rtl8188eu_tx::daIsGroup(rtl8188eu_tx::getDA(frame))) return rtl8188eu_tx::kRate6M;
+    if (!_raValid) {
+        if (_rssiX8 == 0) return rtl8188eu_tx::kRate6M;
+        uint8_t start = rssiStartRate(_rssiX8 / 8, true);
+        rtl8188eu_ra::init(&_ra, 0x0fff, start, false);   // legacy rates only; this dongle is cut D (not I)
+        _raLogged = 0;
+        __sync_synchronize();
+        _raValid = 1;
+        IOLog(LOGP "ra: init start rate idx %u (rssi %d dBm)\n", start, (int)(_rssiX8 / 8));
+    }
+    *ptStage = _ra.pt_stage;
+    return _ra.decision_rate;
+}
+
+// TX report type 2 (rtl8188e_handle_ra_tx_report2, station case: only MACID 0). Runs in the USB completion: no sync USB I/O here,
+// the REG_TX_REPORT_TIME update is queued for the TX path. Layout: 24-byte rxdesc16, then 8-byte items; dw0[9:0] = report length,
+// dw4/dw5 = MACID-valid bitmap.
+void RTL8188EUCore::handleTxReport(const uint8_t *b, uint32_t len)
+{
+    if (!_raValid || len < 24 + rtl8188eu_ra::kItemSize) return;
+    const uint32_t dw0 = OSReadLittleInt32(b, 0), dw3 = OSReadLittleInt32(b, 12), dw4 = OSReadLittleInt32(b, 16);
+    if (((dw3 >> 14) & 3) != 2) return;
+    if ((dw0 & 0x3ff) < rtl8188eu_ra::kItemSize || !(dw4 & 1)) return;
+    int rssi = _rssiX8 / 8 + 100;                                    // rtl8xxxu_signal_to_snr: dBm - NOISE_FLOOR_MIN(-100), 0..100
+    _ra.rssi_sta_ra = (uint8_t)(rssi < 0 ? 0 : rssi > 100 ? 100 : rssi);
+    uint8_t before = _ra.decision_rate;
+    uint16_t newTime = 0;
+    OSIncrementAtomic((volatile SInt32 *)&_stRaReports);
+    if (rtl8188eu_ra::handleItem(&_ra, b + 24, &newTime)) { _rptTimeNew = newTime; _rptTimePending = 1; }
+    if (_ra.decision_rate != before && _raLogged < 60) {
+        _raLogged++;
+        IOLog(LOGP "ra: rate idx %u -> %u (retry %u %u %u %u %u drop %u, rssi_ra %u)\n", before, _ra.decision_rate, _ra.retry[0], _ra.retry[1],
+              _ra.retry[2], _ra.retry[3], _ra.retry[4], _ra.drop, _ra.rssi_sta_ra);
+    }
 }
 
 // Hot-unplug (called from AirPortRTW::willTerminate). Abort is thread-safe; teardown itself still happens in stop().
@@ -1386,6 +1426,7 @@ IOReturn RTL8188EUCore::setSlot(bool shortSlot, bool peerHt)
 // BSS_CHANGED_ASSOC, "joinbss sequence" without the H2C parts (core.c:4930-4955).
 IOReturn RTL8188EUCore::joinBss(uint16_t aid)
 {
+    _raValid = 0;   // new association: restart rate adaptation from the RSSI start rate
     CoreLock lk(_lock);
     IOReturn r;
     if ((r = write8(kRegBcnMaxErr, 0xff)) != kIOReturnSuccess) return r;
@@ -1406,6 +1447,7 @@ IOReturn RTL8188EUCore::joinBss(uint16_t aid)
 // BSS_CHANGED_ASSOC, disassociated branch (core.c:4957).
 IOReturn RTL8188EUCore::leaveBss()
 {
+    _raValid = 0; _rssiX8 = 0;   // RSSI/RA state belonged to the old AP
     CoreLock lk(_lock);
     uint8_t v; IOReturn r = read8(kRegBeaconCtrl, &v);
     if (r != kIOReturnSuccess) return r;

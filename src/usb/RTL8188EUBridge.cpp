@@ -66,8 +66,8 @@ int rtl8188eu_br_tx(void *core, const uint8_t *frame, uint16_t len, const rtl818
 {
     rtl8188eu_tx::Params q = {};
     q.queue = rtl8188eu_tx::selectQueue(frame, p->ac);
-    // GUESS: RSSI-based rate (see pickDataRate) until TX-report rate adaptation exists; mgmt is always 1M in the builder.
-    q.rate = C(core)->pickDataRate(frame);
+    // GUESS: RSSI start rate, then software RA from TX reports (see pickDataRate); mgmt is always 1M in the builder.
+    q.rate = C(core)->pickDataRate(frame, &q.ptStage);
     q.sec = p->ccmp ? rtl8188eu_tx::kSecAes : rtl8188eu_tx::kSecNone;
     q.shortPreamble = p->short_preamble;
     q.useRts = p->use_rts;

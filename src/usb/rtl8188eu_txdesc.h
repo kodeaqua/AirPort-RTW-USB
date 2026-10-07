@@ -53,6 +53,7 @@ struct Params {
     bool     useCtsSelf;     // use_cts_prot
     uint8_t  macidKeyIdx;    // 0xff = none; hw_key_idx for broadcast with hw key (EN_DESC_ID, core.c:5538)
     int32_t  seqOverride;    // >= 0: use this 12-bit seq instead of the frame's seq_ctrl (probe kext mgmt path); -1 = from frame
+    uint8_t  ptStage = kPtStageInit;   // ra_info.pt_stage (data frames, txdw4 bits 15+); rtl8188eu_ra keeps it
 };
 
 inline void le16(uint8_t *p, unsigned o, uint16_t v) { p[o] = (uint8_t)v; p[o + 1] = (uint8_t)(v >> 8); }
@@ -125,7 +126,7 @@ inline uint32_t build(uint8_t *d, const uint8_t *frame, uint16_t len, const Para
     if (isData(frame)) {
         dw5 = p.rate;
         dw4 |= kDw4UseDriverRate;
-        dw4 |= (uint32_t)kPtStageInit << kDw4PtStageShift;
+        dw4 |= (uint32_t)p.ptStage << kDw4PtStageShift;
         dw5 |= kDw5DataFallback;
     }
     dw2 |= kDw2AggBreak;                                      // no A-MPDU

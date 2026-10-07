@@ -62,3 +62,12 @@ Test C (duplicates): `ping -c 30 8.8.8.8`, then `sudo dmesg | grep -E "rx DUPSEQ
 Unicast data frames now use a rate from the smoothed RX RSSI (`pickDataRate`): >=-58 dBm 54M, >=-64 36M, >=-70 24M, >=-76 12M,
 else/unknown/group 6M. GUESS thresholds, no feedback loop. Test: `ping -c 30 <gateway>` and a speed test; the `stats:` line now
 shows `rssi=`. If loss or retries get worse than v0.18.0 (6M), tell me and the thresholds go down; revert = one line in `RTL8188EUBridge.cpp`.
+
+## v0.20.0: software rate adaptation from TX reports (NOT yet run on hardware)
+
+`src/usb/rtl8188eu_ra.h` ports rtl8xxxu 8188e.c RA (tables verified number-for-number against Linux master, host test `make test-ra`).
+Flow: first unicast RSSI sample -> RA starts at the v0.19.0 RSSI-map rate -> TX reports (rpt_sel=2, already enabled in init_tail) feed
+`handleItem()` -> `decision_rate` goes into the txdesc, `pt_stage` too. `REG_TX_REPORT_TIME` updates are queued and written from the TX path.
+Legacy rates only (mask 0x0fff). RA resets on join/leave. GUESS: start rate; whether reports really arrive every ~200 ms is unverified.
+Look for in dmesg: `ra: init start rate idx N`, `ra: rate idx A -> B (retry ...)`. If you never see a rate change during a long
+transfer, or the rate sticks at 1M, send `sudo dmesg | grep -E "ra:|stats:"`.

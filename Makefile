@@ -73,6 +73,12 @@ test-txdesc:
 	@mkdir -p build
 	clang++ -std=c++17 -Wall -Isrc/usb tools/test_txdesc.cpp -o build/test_txdesc && build/test_txdesc
 
+# Host-side unit test of the pure rate-adaptation port.
+.PHONY: test-ra
+test-ra:
+	@mkdir -p build
+	clang++ -std=c++17 -Wall -Isrc/usb tools/test_ra.cpp -o build/test_ra && build/test_ra
+
 # Integrated native Wi-Fi driver: AirPortRTW (PCIe + RTL8188EU USB) -> AirPort-RTW/build/out/AirPortRTW.kext
 # Needs build/fw (run `make usbprobe` once, it fetches the firmware and generates the tables). Do NOT load RTL8188EUProbe together with it.
 .PHONY: airport-usb
