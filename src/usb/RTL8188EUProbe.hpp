@@ -36,6 +36,14 @@ private:
     // Port of rtl8188eu_power_on (8188e.c). Stage 3b-1.
     IOReturn powerOn();
 
+    // Stage 3b-2: firmware. Ports of rtl8xxxu core.c (see docs/stage3b-firmware.md).
+    IOReturn regWriteN(uint16_t addr, const uint8_t *buf, uint32_t len);  // rtl8xxxu_writeN, 196-byte blocks
+    IOReturn initQueues();       // init_queue_reserved_page + init_queue_priority (3 OUT eps) + TRXFF_BNDY
+    IOReturn reset8051();        // rtl8188eu_reset_8051
+    IOReturn fwDownload();       // rtl8xxxu_download_firmware
+    IOReturn fwStart();          // rtl8xxxu_start_firmware
+    IOReturn loadFirmware();     // header check + initQueues + download (6 tries) + start
+
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);
     IOReturn efuseReadAll();
@@ -47,6 +55,7 @@ private:
     IOUSBHostPipe            *_bulkOut[4] = {};
     uint32_t                  _nBulkOut = 0;
     IOBufferMemoryDescriptor *_ctlBuf = nullptr;
+    IOBufferMemoryDescriptor *_blkBuf = nullptr;   // 196 bytes, writeN chunk
     bool                      _open   = false;
     uint8_t                   _efuse[512];   // EFUSE_MAP_LEN, logical map, 0xff = unprogrammed
 };
