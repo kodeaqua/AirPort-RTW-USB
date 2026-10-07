@@ -62,6 +62,7 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   Measured seam (2026-10-07): frontend needs ~45 `rtw88_*`/`rtw_pci_*` symbols; PCI coupling in RTW88IEEE80211.cpp is ~8 sites (L35-44, 482-530, 822-863, 933, 982),
   AirPortRTW.cpp has 43 PCI sites. The AirPort-RTW clone is gitignored here, so frontend changes must be kept as patch files in this repo.
   Data-frame txdesc: ported (2026-10-07, `src/usb/rtl8188eu_txdesc.h`, queue select, QoS, CCMP sec bits, rate param, RTS/short preamble; host test `make test-txdesc`; mgmt output byte-identical to the hardware-proven version; data frames NOT yet tested on hardware).
+  **Data-frame txdesc PROVEN over the air (2026-10-07, v0.14.0):** `data_selftest` sent=5 submit_err=0, deauth/disassoc_to_us=5 (AP rejects our unassociated data frames = it decoded them), tx 10/10 errors=0; async_selftest rx 63/63, beacons=19, probe_resp=12 to_us=12. All hardware prerequisites for the frontend shim (WP4-6) are met.
   Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, RSSI/phystats, TX report, A-MPDU/HT40/SGI txdesc bits, driver-side rate adaptation (ra_info; data rate is a caller-supplied parameter, GUESS: conservative basic rate until RA exists).
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
