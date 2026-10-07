@@ -56,3 +56,19 @@ Register values in every sub-step must be copied from source; mark any deviation
 - Verdict: **ran OK, readback criterion not met, unexplained.** Not treated as a blocker; real proof is RF function
   (beacon RX during scan). Revisit if RX shows nothing.
 
+## 3c-4 + 3c-5 (v0.8.0, written 2026-10-07, awaiting hardware test)
+Ported from `build/src/core.c` (init_device 3958+), `8188e.c`, `8188f.c`; all constants checked in `regs.h`/`rtl8xxxu.h`.
+- `initWmac()` (3c-4): RFSW control, TX buffer boundary 0xaa, PBP, LLT (0xa9 pages, last entry 175), usb_quirks,
+  TX report, RX_DRVINFO_SZ=4, HISR/HIMR (8188E branch), RCR + MAR, response rate, SIFS/retry, EDCA, DARFRC/RARFRC,
+  ACKTO, beacon params, init_aggregation, packet lifetime, CCK+OFDM enable, CAM invalidate.
+- `setTxPower()` + `phyLcCalibrate()` + `initTail()` (3c-5): `rtl8188f_set_tx_power` (channel 1, from efuse cck_base @0x10 /
+  ht40_base @0x16; diff terms are 0 for 8188EU), LEDCFG2 DPDT, HWSEQ=0xff, BAR_MODE_CTRL, GPIO_MUXCFG, LC calibration,
+  thermal meter (RF 0x42 = 0x37cf8), NAV_UPPER, USB_HRPWM, FWHW_TXQ_CTRL.
+- Deviation (guess): Linux skips the `!macpower` blocks if the MAC was already powered before power_on; we always take
+  the full path since the probe always runs power_on first.
+- NOT done (deferred): `phy_iq_calibrate` (8188e.c:906), `set_crystal_cap`/CFO tracking, rate-control init, channel switch.
+- Expected log lines: `init_wmac OK` (RCR=0x7000600e, RX_DRVINFO=4, TRXFF_BNDY=0xaa, RFSW=0x07000760, SIFS_CCK=0x100a,
+  EDCA_BE=0x005ea42b) and `init_tail OK` (NAV_UPPER=0xeb, HWSEQ=0xff, RF18 bit15 clear after LC calibration).
+- Possible explanation for the 3c-3 mismatch at RF reg 0x18 (0x0f407 written, 0x07407 read): bit 15 is the LC
+  calibration start bit, which hardware clears when done. Guess; the 3c-5 log (RF18 after LC cal) will tell.
+

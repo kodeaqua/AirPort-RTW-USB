@@ -61,6 +61,16 @@ private:
     IOReturn initPhyRf();
     IOReturn rfVerify(uint32_t *checked, uint32_t *mismatch, uint32_t *firstBadReg, uint32_t *firstBadGot);
 
+    // Stage 3c-4: LLT + WMAC/EDCA/beacon block of rtl8xxxu_init_device (see docs/stage3c-init.md).
+    IOReturn lltWrite(uint8_t address, uint8_t data);
+    IOReturn initLlt();
+    IOReturn initWmac();
+
+    // Stage 3c-5: set_tx_power (8188f.c:358), LC calibration (core.c:3498) and the tail of init_device.
+    IOReturn setTxPower(int channel, bool ht40);
+    IOReturn phyLcCalibrate();
+    IOReturn initTail();
+
     // Port of rtl8xxxu_read_efuse8 / rtl8xxxu_read_efuse (core.c). Fills _efuse[512].
     IOReturn efuseRead8(uint16_t offset, uint8_t *data);
     IOReturn efuseReadAll();

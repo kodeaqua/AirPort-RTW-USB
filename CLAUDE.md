@@ -53,7 +53,8 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   0x800=0x80040000 0x804=0x00000003 0x808=0x0000fc00; rf_read(A,0x00)=0x33e73` (RF read works; value informational).
   **Stage 3c-3 (init_phy_rf): ran OK on hardware (v0.7.1), readback 36/49 match, 13 mismatch unexplained**
   (table and accessors verified identical to Linux; not a blocker, proof comes from RX). See `docs/stage3c-init.md`.
-  Next: 3c-4 (WMAC/EDCA/LLT block).
+  3c-4 (WMAC/LLT/EDCA) and 3c-5 (tx power, LC cal, tail) written as v0.8.0, build OK, awaiting hardware test.
+  Deferred: phy_iq_calibrate, set_crystal_cap, channel switch (config_channel), RX/TX paths.
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)

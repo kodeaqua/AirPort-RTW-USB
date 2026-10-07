@@ -70,6 +70,52 @@ enum {
     kRegTrxffBndy     = 0x0114, kTrxffBoundary8188e = 0x25ff,
     kRegRqpn          = 0x0200, kRegRqpnNpq = 0x0214, kRqpnLoad = 1u << 31,
     kTxTotalPage8188e = 0xa9, kTxPageHi8188e = 0x29, kTxPageLo8188e = 0x1c, kTxPageNorm8188e = 0x1c,
+    // Stage 3c-4 WMAC/LLT block (regs.h, verified 2026-10-07 against build/src/regs.h)
+    kRegLltInit = 0x01e0, kLltOpWrite = 1u << 30, kLltOpMask = 3u << 30, kLltPoll = 20,
+    kLastLltEntry8188e = 175,
+    kRegTxpktbufBcnqBdny = 0x0424, kRegTxpktbufMgqBdny = 0x0425, kRegTxpktbufWmacLbkBfHd = 0x045d,
+    kRegTdectrl = 0x0208, kRegPbp = 0x0104, kPbpPageSize128 = 1, kPbpRxShift = 0, kPbpTxShift = 4,
+    kFpga0RfTrsw = 1u << 5, kFpga0RfTrswb = 1u << 6, kFpga0RfAntsw = 1u << 8, kFpga0RfAntswb = 1u << 9,
+    kFpga0RfPape = 1u << 10, kFpga0RfBdCtrlShift = 16,
+    kCrMacTxEnable = 1u << 6, kCrMacRxEnable = 1u << 7,
+    kRegTxdmaOffsetChk = 0x020c, kTxdmaOffsetDropDataEn = 1u << 9,
+    kRegEarlyModeControl8188e = 0x04d0,
+    kRegTxReportCtrl = 0x04ec, kTxReportCtrlTimerEnable = 1u << 1, kRegTxReportTime = 0x04f0,
+    kRegRxDrvinfoSz = 0x060f,
+    kRegHisr0 = 0x00b4, kRegHimr0 = 0x00b0, kRegHimr1 = 0x00b8,
+    kImr0Pstimeout = 1u << 29, kImr0Tbder = 1u << 26, kImr0Cpwm = 1u << 8, kImr0Cpwm2 = 1u << 9,
+    kImr1Txerr = 1u << 11, kImr1Rxerr = 1u << 10, kImr1Txfovw = 1u << 9, kImr1Rxfovw = 1u << 8,
+    kRegUsbSpecialOption = 0xfe55, kUsbSpecIntBulkSelect = 1u << 4, kUsbSpecUsbAggEnable = 1u << 3,
+    kTrxdmaCtrlRxdmaAggEn = 1u << 2,
+    kRegRcr = 0x0608, kRcrAcceptPhysMatch = 1u << 1, kRcrAcceptMcast = 1u << 2, kRcrAcceptBcast = 1u << 3,
+    kRcrAcceptMgmtFrame = 1u << 13, kRcrHtcLocCtrl = 1u << 14,
+    kRcrAppendPhystat = 1u << 28, kRcrAppendIcv = 1u << 29, kRcrAppendMic = 1u << 30,
+    kRegMar = 0x0620,
+    kRegResponseRateSet = 0x0440, kResponseRateBitmapAll = 0xfffff, kResponseRateRrsrCckOnly1m = 0xffff1,
+    kRegSpecSifs = 0x0428, kRegRetryLimit = 0x042a,
+    kRegMacSpecSifs = 0x063a, kRegSifsCck = 0x0514, kRegSifsOfdm = 0x0516,
+    kRegEdcaBe = 0x0508, kRegEdcaBk = 0x050c, kRegEdcaVi = 0x0504, kRegEdcaVo = 0x0500,
+    kRegDarfrc = 0x0430, kRegRarfrc = 0x0438,
+    kRegFwhwTxqCtrl = 0x0420, kFwhwTxqCtrlAmpduRetry = 1u << 7,
+    kRegAckto = 0x0640,
+    kRegBeaconCtrl = 0x0550, kBeaconDisableTsfUpdate = 1u << 4,
+    kRegTbttProhibit = 0x0540, kRegDriverEarlyInt = 0x0558, kDriverEarlyIntTime = 5,
+    kRegBeaconDmaTime = 0x0559, kBeaconDmaAtimeIntTime = 2, kRegBeaconTcfg = 0x0510,
+    kRegPktVoViLifeTime = 0x04c0, kRegPktBeBkLifeTime = 0x04c2,
+    kRegFpga0RfMode = 0x0800, kFpgaRfModeCck = 1u << 24, kFpgaRfModeOfdm = 1u << 25,
+    kRegCamCmd = 0x0670, kCamCmdPolling = 1u << 31,
+    // Stage 3c-5 tail of init_device (regs.h / rtl8xxxu.h / 8188f.c, verified 2026-10-07)
+    kEfuseOffCckBaseA = 0x10, kEfuseOffHt40BaseA = 0x16,        // struct rtl8188eu_efuse.tx_power_index_A
+    kRegTxAgcACck1Mcs32 = 0x0e08, kRegTxAgcBCck11ACck211 = 0x086c,
+    kRegTxAgcARate1806 = 0x0e00, kRegTxAgcARate5424 = 0x0e04,
+    kRegTxAgcAMcs0300 = 0x0e10, kRegTxAgcAMcs0704 = 0x0e14, kRegTxAgcAMcs1108 = 0x0e18, kRegTxAgcAMcs1512 = 0x0e1c,
+    kRegLedcfg2 = 0x004e, kLedcfg2DpdtSelect = 1u << 7,
+    kRegHwseqCtrl = 0x0423, kRegBarModeCtrl = 0x04cc,
+    kRegGpioMuxcfg = 0x0040, kGpioMuxcfgIoSelEnbt = 1u << 5,
+    kRegTxpause = 0x0522, kRegOfdm1Lstf = 0x0d00, kOfdmLstfMask = 0x70000000,
+    kRf6052RegAc = 0x00, kRf6052RegModeAg = 0x18, kRf6052RegTMeter8723b = 0x42,
+    kRegNavUpper = 0x0652, kNavUpperUnit = 128, kRegUsbHrpwm = 0xfe58,
+    kFwhwTxqCtrlXmitMgmtAck = 1u << 12,
     // struct rtl8188eu_efuse (rtl8xxxu.h)
     kEfuseRtlId       = 0x8129, kEfuseOffMac = 0xD7,
 };
@@ -594,6 +640,224 @@ IOReturn RTL8188EUProbe::rfVerify(uint32_t *checked, uint32_t *mismatch, uint32_
     return kIOReturnSuccess;
 }
 
+// rtl8xxxu_llt_write (core.c:2498): write one LLT entry, poll until the op bits go inactive.
+IOReturn RTL8188EUProbe::lltWrite(uint8_t address, uint8_t data)
+{
+    IOReturn r = write32(kRegLltInit, kLltOpWrite | ((uint32_t)address << 8) | data);
+    if (r != kIOReturnSuccess) return r;
+    uint32_t v = 0;
+    int count = 0;
+    do {
+        if ((r = read32(kRegLltInit, &v)) != kIOReturnSuccess) return r;
+        if ((v & kLltOpMask) == 0) return kIOReturnSuccess;     // LLT_OP_INACTIVE
+    } while (count++ < kLltPoll);
+    return kIOReturnTimeout;                                    // Linux: -EBUSY
+}
+
+// rtl8xxxu_init_llt_table (core.c:2519) with 8188e total_page_num=0xa9, last_llt_entry=175.
+IOReturn RTL8188EUProbe::initLlt()
+{
+    IOReturn r;
+    const uint8_t lastTxPage = kTxTotalPage8188e;
+    for (uint32_t i = 0; i < lastTxPage; i++)
+        if ((r = lltWrite((uint8_t)i, (uint8_t)(i + 1))) != kIOReturnSuccess) return r;
+    if ((r = lltWrite(lastTxPage, 0xff)) != kIOReturnSuccess) return r;
+    for (uint32_t i = lastTxPage + 1; i < kLastLltEntry8188e; i++)       // remaining pages: ring buffer
+        if ((r = lltWrite((uint8_t)i, (uint8_t)(i + 1))) != kIOReturnSuccess) return r;
+    return lltWrite(kLastLltEntry8188e, lastTxPage + 1);
+}
+
+// Port of the part of rtl8xxxu_init_device (core.c:3958) between init_phy_rf and set_tx_power, for the 8188EU
+// (fops: has_tx_report, init_reg_pkt_life_time, init_aggregation, no init_reg_rxfltmap/init_burst/init_statistics).
+// Deviation (guess): Linux samples "macpower" (CR/SYS_CLKR) before power_on and skips the !macpower blocks
+// if the MAC was already up. The probe always ran the full sequence from power_on, so it takes the !macpower path.
+// set_tx_power, LEDCFG2/HWSEQ/BAR/GPIO_MUXCFG, LC/IQ calibration are deferred to 3c-5.
+IOReturn RTL8188EUProbe::initWmac()
+{
+    IOReturn r; uint8_t v8; uint16_t v16; uint32_t v32;
+#define TRY(x) do { if ((r = (x)) != kIOReturnSuccess) { IOLog(LOGP "initWmac: %s failed 0x%08x (line %d)\n", #x, r, __LINE__); return r; } } while (0)
+
+    // RFSW control (no_pape is never set for 8188EU, so PAPE is included).
+    v32 = kFpga0RfTrsw | kFpga0RfTrswb | kFpga0RfAntsw | kFpga0RfAntswb |
+          ((kFpga0RfAntsw | kFpga0RfAntswb) << kFpga0RfBdCtrlShift) |
+          kFpga0RfPape;
+    TRY(write32(kRegFpgaXaRfSwCtrl, v32));
+
+    // TX buffer boundary
+    v8 = kTxTotalPage8188e + 1;
+    TRY(write8(kRegTxpktbufBcnqBdny, v8));
+    TRY(write8(kRegTxpktbufMgqBdny, v8));
+    TRY(write8(kRegTxpktbufWmacLbkBfHd, v8));
+    TRY(write8(kRegTrxffBndy, v8));
+    TRY(write8(kRegTdectrl + 1, v8));
+
+    TRY(write8(kRegPbp, (kPbpPageSize128 << kPbpRxShift) | (kPbpPageSize128 << kPbpTxShift)));
+
+    TRY(initLlt());
+
+    // rtl8188e_usb_quirks (8188e.c:1290) + rtl8xxxu_gen2_usb_quirks (core.c:3782)
+    TRY(read16(kRegCr, &v16));
+    TRY(write16(kRegCr, v16 | kCrMacTxEnable | kCrMacRxEnable));
+    TRY(read32(kRegTxdmaOffsetChk, &v32));
+    TRY(write32(kRegTxdmaOffsetChk, v32 | kTxdmaOffsetDropDataEn));
+    TRY(write8(kRegEarlyModeControl8188e + 3, 0x01));
+
+    // TX report (has_tx_report, RTL8188E)
+    TRY(read8(kRegTxReportCtrl, &v8));
+    TRY(write8(kRegTxReportCtrl, v8 | (1u << 0) | kTxReportCtrlTimerEnable));
+    TRY(write8(kRegTxReportCtrl + 1, 0x02));
+    TRY(write16(kRegTxReportTime, 0xcdf0));
+    TRY(read8(0xa3, &v8));
+    TRY(write8(0xa3, v8 & 0xf8));
+
+    TRY(write8(kRegRxDrvinfoSz, 4));
+
+    // Interrupts, RTL8188E branch
+    TRY(write32(kRegHisr0, 0xffffffff));
+    TRY(write32(kRegHimr0, kImr0Pstimeout | kImr0Tbder | kImr0Cpwm | kImr0Cpwm2));
+    TRY(write32(kRegHimr1, kImr1Txerr | kImr1Rxerr | kImr1Txfovw | kImr1Rxfovw));
+    TRY(read8(kRegUsbSpecialOption, &v8));
+    TRY(write8(kRegUsbSpecialOption, v8 | kUsbSpecIntBulkSelect));
+
+    // WMAC: RCR, multicast (init_reg_rxfltmap is not set for 8188EU)
+    TRY(write32(kRegRcr, kRcrAcceptPhysMatch | kRcrAcceptMcast | kRcrAcceptBcast | kRcrAcceptMgmtFrame |
+                         kRcrHtcLocCtrl | kRcrAppendPhystat | kRcrAppendIcv | kRcrAppendMic));
+    TRY(write32(kRegMar, 0xffffffff));
+    TRY(write32(kRegMar + 4, 0xffffffff));
+
+    // Adaptive controls
+    TRY(read32(kRegResponseRateSet, &v32));
+    v32 &= ~(uint32_t)kResponseRateBitmapAll;
+    v32 |= kResponseRateRrsrCckOnly1m;
+    TRY(write32(kRegResponseRateSet, v32));
+
+    // set_spec_sifs(0x10,0x10); set_retry(0x30,0x30); set_spec_sifs(0x0a,0x10): cck in low byte, ofdm in high byte
+    TRY(write16(kRegSpecSifs, (0x10 << 8) | 0x10));
+    TRY(write16(kRegRetryLimit, (0x30 << 8) | 0x30));       // short<<8 (mask 0x3f00) | long (mask 0x003f)
+    TRY(write16(kRegSpecSifs, (0x10 << 8) | 0x0a));
+
+    // EDCA
+    TRY(write16(kRegMacSpecSifs, 0x100a));
+    TRY(write16(kRegSifsCck, 0x100a));
+    TRY(write16(kRegSifsOfdm, 0x100a));
+    TRY(write32(kRegEdcaBe, 0x005ea42b));
+    TRY(write32(kRegEdcaBk, 0x0000a44f));
+    TRY(write32(kRegEdcaVi, 0x005ea324));
+    TRY(write32(kRegEdcaVo, 0x002fa226));
+
+    // Data auto rate fallback retry counts
+    TRY(write32(kRegDarfrc, 0x00000000));
+    TRY(write32(kRegDarfrc + 4, 0x10080404));
+    TRY(write32(kRegRarfrc, 0x04030201));
+    TRY(write32(kRegRarfrc + 4, 0x08070605));
+
+    TRY(read8(kRegFwhwTxqCtrl, &v8));
+    TRY(write8(kRegFwhwTxqCtrl, v8 | kFwhwTxqCtrlAmpduRetry));
+    TRY(write8(kRegAckto, 0x40));
+
+    // Beacon parameters (RTL8188E is not in the exclusion list for REG_DRVERLYINT)
+    TRY(write16(kRegBeaconCtrl, kBeaconDisableTsfUpdate | (kBeaconDisableTsfUpdate << 8)));
+    TRY(write16(kRegTbttProhibit, 0x6404));
+    TRY(write8(kRegDriverEarlyInt, kDriverEarlyIntTime));
+    TRY(write8(kRegBeaconDmaTime, kBeaconDmaAtimeIntTime));
+    TRY(write16(kRegBeaconTcfg, 0x660F));
+
+    // rtl8188eu_init_aggregation (8188e.c:524)
+    TRY(read8(kRegUsbSpecialOption, &v8));
+    TRY(write8(kRegUsbSpecialOption, v8 & ~kUsbSpecUsbAggEnable));
+    TRY(read8(kRegTrxdmaCtrl, &v8));
+    TRY(write8(kRegTrxdmaCtrl, v8 & ~kTrxdmaCtrlRxdmaAggEn));
+
+    // init_reg_pkt_life_time
+    TRY(write16(kRegPktVoViLifeTime, 0x0400));
+    TRY(write16(kRegPktBeBkLifeTime, 0x0400));
+
+    // Enable CCK and OFDM blocks
+    TRY(read32(kRegFpga0RfMode, &v32));
+    TRY(write32(kRegFpga0RfMode, v32 | kFpgaRfModeCck | kFpgaRfModeOfdm));
+
+    // Invalidate all CAM entries (bit 30 undocumented)
+    TRY(write32(kRegCamCmd, kCamCmdPolling | (1u << 30)));
+#undef TRY
+    return kIOReturnSuccess;
+}
+
+// rtl8188f_set_tx_power (8188f.c:358), which is what rtl8188eu_fops.set_tx_power points to. The 8188EU parse_efuse
+// only fills cck_base and ht40_base, so all the *_diff terms stay 0 (priv is zeroed). Channel 1 -> group 0, cck_group 0.
+IOReturn RTL8188EUProbe::setTxPower(int channel, bool ht40)
+{
+    IOReturn r; uint32_t v32;
+    int group = channel < 3 ? 0 : channel < 6 ? 1 : channel < 9 ? 2 : channel < 12 ? 3 : 4;
+    int cckGroup = (channel == 14) ? 5 : group;
+    uint8_t cck = _efuse[kEfuseOffCckBaseA + cckGroup];
+    uint8_t ofdmbase = _efuse[kEfuseOffHt40BaseA + group];     // + ofdm_tx_power_diff[0].a == 0
+    uint8_t mcsbase = ofdmbase;                                 // + ht{20,40}_tx_power_diff[0].a == 0
+    (void)ht40;
+    uint32_t ofdm = ofdmbase * 0x01010101u, mcs = mcsbase * 0x01010101u;
+    IOLog(LOGP "set_tx_power ch%d: cck=0x%02x ofdm/mcs=0x%02x (efuse)\n", channel, cck, ofdmbase);
+
+    if ((r = read32(kRegTxAgcACck1Mcs32, &v32)) != kIOReturnSuccess) return r;
+    v32 = (v32 & 0xffff00ff) | ((uint32_t)cck << 8);
+    if ((r = write32(kRegTxAgcACck1Mcs32, v32)) != kIOReturnSuccess) return r;
+    if ((r = read32(kRegTxAgcBCck11ACck211, &v32)) != kIOReturnSuccess) return r;
+    v32 = (v32 & 0xff) | ((uint32_t)cck << 8) | ((uint32_t)cck << 16) | ((uint32_t)cck << 24);
+    if ((r = write32(kRegTxAgcBCck11ACck211, v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegTxAgcARate1806, ofdm)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegTxAgcARate5424, ofdm)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegTxAgcAMcs0300, mcs)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegTxAgcAMcs0704, mcs)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegTxAgcAMcs1108, mcs)) != kIOReturnSuccess) return r;
+    return write32(kRegTxAgcAMcs1512, mcs);
+}
+
+// rtl8723a_phy_lc_calibrate (core.c:3498), RF path A only (tx_paths == 1; has_s0s1 is not set for 8188EU).
+IOReturn RTL8188EUProbe::phyLcCalibrate()
+{
+    IOReturn r; uint32_t lstf, rfAmode = 0, v32;
+    if ((r = read32(kRegOfdm1Lstf, &lstf)) != kIOReturnSuccess) return r;
+    bool contTx = (lstf & kOfdmLstfMask) != 0;
+    if (contTx) {
+        if ((r = write32(kRegOfdm1Lstf, lstf & ~(uint32_t)kOfdmLstfMask)) != kIOReturnSuccess) return r;
+        if ((r = rfRead(kRf6052RegAc, &rfAmode)) != kIOReturnSuccess) return r;
+        if ((r = rfWrite(kRf6052RegAc, (rfAmode & 0x8ffff) | 0x10000)) != kIOReturnSuccess) return r;
+    } else {
+        if ((r = write8(kRegTxpause, 0xff)) != kIOReturnSuccess) return r;
+    }
+    if ((r = rfRead(kRf6052RegModeAg, &v32)) != kIOReturnSuccess) return r;
+    if ((r = rfWrite(kRf6052RegModeAg, v32 | 0x08000)) != kIOReturnSuccess) return r;
+    IOSleep(100);
+    if (contTx) {
+        if ((r = write32(kRegOfdm1Lstf, lstf)) != kIOReturnSuccess) return r;
+        return rfWrite(kRf6052RegAc, rfAmode);
+    }
+    return write8(kRegTxpause, 0x00);
+}
+
+// Remaining part of rtl8xxxu_init_device (core.c:4283-4440) for the 8188EU, up to (not including) IQ calibration,
+// which is deferred (8188e.c:906, ~350 lines, not needed for scan to start), as are set_crystal_cap/CFO tracking and
+// the software rate-control init.
+IOReturn RTL8188EUProbe::initTail()
+{
+    IOReturn r; uint8_t v8; uint32_t v32;
+#define TRY(x) do { if ((r = (x)) != kIOReturnSuccess) { IOLog(LOGP "initTail: %s failed 0x%08x (line %d)\n", #x, r, __LINE__); return r; } } while (0)
+    TRY(setTxPower(1, false));                               // default power, channel 1, 20 MHz
+    TRY(read8(kRegLedcfg2, &v8));                            // let the 8051 take antenna control
+    TRY(write8(kRegLedcfg2, v8 | kLedcfg2DpdtSelect));
+    TRY(write8(kRegHwseqCtrl, 0xff));
+    TRY(write32(kRegBarModeCtrl, 0x0201ffff));
+    TRY(read8(kRegGpioMuxcfg, &v8));                         // 8188E/F/8192F GPIO init
+    TRY(write8(kRegGpioMuxcfg, v8 & ~kGpioMuxcfgIoSelEnbt));
+    TRY(phyLcCalibrate());
+    // gen2_thermal_meter, chip != 8188F/8710B
+    TRY(rfWrite(kRf6052RegTMeter8723b, 0x37cf8));
+    TRY(write8(kRegNavUpper, (30000 + kNavUpperUnit - 1) / kNavUpperUnit));
+    TRY(write8(kRegUsbHrpwm, 0x00));                         // RTL8192E/RTL8188E
+    TRY(read32(kRegFwhwTxqCtrl, &v32));
+    TRY(write32(kRegFwhwTxqCtrl, v32 | kFwhwTxqCtrlXmitMgmtAck));
+#undef TRY
+    return kIOReturnSuccess;
+}
+
 bool RTL8188EUProbe::start(IOService *provider)
 {
     if (!super::start(provider)) return false;
@@ -689,6 +953,31 @@ bool RTL8188EUProbe::start(IOService *provider)
                                 IOLog(LOGP "init_phy_rf %s (0x%08x): verify %s: %u regs read back, %u mismatch (first: reg 0x%02x got 0x%05x)\n",
                                       fr2 == kIOReturnSuccess ? "OK" : "FAILED", fr2,
                                       vr == kIOReturnSuccess ? "ok" : "ERROR", chk, bad, badReg, badGot);
+                                if (fr2 == kIOReturnSuccess) {
+                                    // Stage 3c-4: WMAC/LLT/EDCA/beacon block (Linux order: init_phy_rf -> RFSW ... CAM).
+                                    IOReturn wr = initWmac();
+                                    uint32_t rcr = 0, llt = 0, cam = 0, sw = 0, edca = 0;
+                                    uint16_t cr2 = 0, mx = 0; uint8_t drv = 0, bnd = 0;
+                                    read32(kRegRcr, &rcr); read32(kRegLltInit, &llt); read32(kRegCamCmd, &cam);
+                                    read32(kRegFpgaXaRfSwCtrl, &sw); read32(kRegEdcaBe, &edca);
+                                    read16(kRegCr, &cr2); read8(kRegRxDrvinfoSz, &drv); read8(kRegTrxffBndy, &bnd);
+                                    read16(kRegSifsCck, &mx);
+                                    IOLog(LOGP "init_wmac %s (0x%08x): CR=0x%04x RCR=0x%08x (expect 0x7000600e) RX_DRVINFO=%u (expect 4) "
+                                          "TRXFF_BNDY=0x%02x (expect 0xaa) RFSW=0x%08x (expect 0x07000760) SIFS_CCK=0x%04x (expect 0x100a) "
+                                          "EDCA_BE=0x%08x (expect 0x005ea42b) LLT_INIT=0x%08x CAM_CMD=0x%08x\n",
+                                          wr == kIOReturnSuccess ? "OK" : "FAILED", wr, cr2, rcr, drv, bnd, sw, mx, edca, llt, cam);
+                                    if (wr == kIOReturnSuccess) {
+                                        // Stage 3c-5: tx power, LC calibration, thermal meter, NAV etc.
+                                        IOReturn tr = initTail();
+                                        uint32_t agc = 0, ofdmr = 0, rf18 = 0, rf42 = 0; uint8_t nav = 0, hw = 0;
+                                        read32(kRegTxAgcACck1Mcs32, &agc); read32(kRegTxAgcARate1806, &ofdmr);
+                                        rfRead(kRf6052RegModeAg, &rf18); rfRead(kRf6052RegTMeter8723b, &rf42);
+                                        read8(kRegNavUpper, &nav); read8(kRegHwseqCtrl, &hw);
+                                        IOLog(LOGP "init_tail %s (0x%08x): 0xe08=0x%08x 0xe00=0x%08x RF18=0x%05x (LC cal bit15 should be clear) "
+                                              "RF42=0x%05x NAV_UPPER=0x%02x (expect 0xeb) HWSEQ=0x%02x (expect 0xff)\n",
+                                              tr == kIOReturnSuccess ? "OK" : "FAILED", tr, agc, ofdmr, rf18, rf42, nav, hw);
+                                    }
+                                }
                             }
                         }
                     }
