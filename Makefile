@@ -72,3 +72,10 @@ clean:
 test-txdesc:
 	@mkdir -p build
 	clang++ -std=c++17 -Wall -Isrc/usb tools/test_txdesc.cpp -o build/test_txdesc && build/test_txdesc
+
+# Integrated native Wi-Fi driver: AirPortRTW (PCIe + RTL8188EU USB) -> AirPort-RTW/build/out/AirPortRTW.kext
+# Needs build/fw (run `make usbprobe` once, it fetches the firmware and generates the tables). Do NOT load RTL8188EUProbe together with it.
+.PHONY: airport-usb
+airport-usb: $(ROOT)/build/fw/rtl8188eu_fw.h $(ROOT)/build/fw/rtl8188eu_tables.h
+	./scripts/apply-usb-patches.sh
+	$(MAKE) -C AirPort-RTW airport RTW_USB_SRC=$(ROOT)/src/usb

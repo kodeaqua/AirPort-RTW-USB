@@ -1,0 +1,270 @@
+--- a/src/kext/AirPortRTW.cpp
++++ b/src/kext/AirPortRTW.cpp
+@@ -3,6 +3,9 @@
+  * Native IO80211 controller for the RTL8822BE port.
+  */
+ #include "AirPortRTW.hpp"
++#ifdef RTW_USB
++#include "rtl8188eu_bridge.h"
++#endif
+ #include "AirPortRTWInterface.hpp"
+ #include "RTW88AssocWire.hpp"
+ #include "RTW88UserClient.hpp"
+@@ -113,17 +116,22 @@
+     setProperty("STA_V19_DARWIN_ENOTSUP_FIX", kOSBooleanTrue);
+     setProperty("STA_V20_POWERSAVE_PREFLIGHT_FIX", kOSBooleanTrue);
+     IOLog("AirPortRTW: start\n");
+-    _pciDev = OSDynamicCast(IOPCIDevice, provider);
+-    if (!_pciDev) {
+-        IOLog("AirPortRTW: provider is not IOPCIDevice\n");
+-        return false;
++#ifdef RTW_USB
++    _isUsb = rtl8188eu_is_usb_provider(provider);
++#endif
++    if (!_isUsb) {
++        _pciDev = OSDynamicCast(IOPCIDevice, provider);
++        if (!_pciDev) {
++            IOLog("AirPortRTW: provider is not IOPCIDevice\n");
++            return false;
++        }
+     }
+     if (!super::start(provider)) {
+         _pciDev = nullptr;
+         return false;
+     }
+     _superStarted = true;
+-    _pciDev->retain();
++    if (_pciDev) _pciDev->retain();
+ 
+     /* Locks para tracking DMA -- antes faltaban por completo */
+     _dmaLock = IOSimpleLockAlloc();
+@@ -131,24 +139,26 @@
+     if (!_dmaLock || !_pendingFreeLock)
+         return failStart(provider, "failed to allocate DMA locks");
+ 
+-    /* Habilitar bus mastering y espacio de memoria */
+-    _pciDev->setBusMasterEnable(true);
+-    _pciDev->setMemoryEnable(true);
++    if (!_isUsb) {
++        /* Habilitar bus mastering y espacio de memoria */
++        _pciDev->setBusMasterEnable(true);
++        _pciDev->setMemoryEnable(true);
+ 
+-    /* Mapear BAR2 -- rtw88 hardcodea bar_id=2 en pci.c */
+-    _mmioMap = _pciDev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress2);
+-    if (!_mmioMap) {
+-        return failStart(provider, "failed to map BAR2");
+-    }
+-    _mmioBase = (volatile void *)_mmioMap->getVirtualAddress();
+-    IOLog("AirPortRTW: BAR2 mapped at %p, size 0x%llx\n",
+-          (void *)_mmioBase, (unsigned long long)_mmioMap->getLength());
++        /* Mapear BAR2 -- rtw88 hardcodea bar_id=2 en pci.c */
++        _mmioMap = _pciDev->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress2);
++        if (!_mmioMap) {
++            return failStart(provider, "failed to map BAR2");
++        }
++        _mmioBase = (volatile void *)_mmioMap->getVirtualAddress();
++        IOLog("AirPortRTW: BAR2 mapped at %p, size 0x%llx\n",
++              (void *)_mmioBase, (unsigned long long)_mmioMap->getLength());
+ 
+-    /* Instalar callbacks compartidos de compat (mismos que usa RTW88PCIDevice,
+-     * ahora apuntando a esta instancia via el puntero generico RTW88HwOps*) */
+-    g_pci_dev_instance = this;
+-    rtw88_pci_io_ops    = &_pci_io_ops;
+-    rtw88_dma_ops       = &_dma_ops;
++        /* Instalar callbacks compartidos de compat (mismos que usa RTW88PCIDevice,
++         * ahora apuntando a esta instancia via el puntero generico RTW88HwOps*) */
++        g_pci_dev_instance = this;
++        rtw88_pci_io_ops    = &_pci_io_ops;
++        rtw88_dma_ops       = &_dma_ops;
++    }
+ 
+     if (rtw88_compat_init() != 0)
+         return failStart(provider, "compat initialization failed");
+@@ -158,14 +168,28 @@
+     if (!_compatPciDev)
+         return failStart(provider, "failed to allocate compat PCI device");
+ 
+-    _compatPciDev->vendor  = _pciDev->configRead16(0x00);
+-    _compatPciDev->device  = _pciDev->configRead16(0x02);
+     _compatPciDev->kext_dev = this;
+-    _compatPciDev->resource[2]     = (resource_size_t)_mmioBase;
+-    _compatPciDev->resource_len[2] = (resource_size_t)_mmioMap->getLength();
+-
+-    IOLog("AirPortRTW: PCI device %04x:%04x\n",
+-          _compatPciDev->vendor, _compatPciDev->device);
++    if (!_isUsb) {
++        _compatPciDev->vendor  = _pciDev->configRead16(0x00);
++        _compatPciDev->device  = _pciDev->configRead16(0x02);
++        _compatPciDev->resource[2]     = (resource_size_t)_mmioBase;
++        _compatPciDev->resource_len[2] = (resource_size_t)_mmioMap->getLength();
++        IOLog("AirPortRTW: PCI device %04x:%04x\n",
++              _compatPciDev->vendor, _compatPciDev->device);
++    }
++#ifdef RTW_USB
++    else {
++        /* Placeholder pci_dev (the frontend only passes it through to core ops probe). */
++        _compatPciDev->vendor = 0x0bda;
++        _compatPciDev->device = 0x8179;
++        _usbCore = rtl8188eu_core_create(this, provider);
++        if (!_usbCore)
++            return failStart(provider, "RTL8188EU core attach failed");
++        rtl8188eu_hw_set_core(_usbCore);
++        rtl8188eu_hw_register(true);
++        IOLog("AirPortRTW: USB RTL8188EU core attached\n");
++    }
++#endif
+ 
+     /* super::start() has already called our createWorkLoop().  The reference IO80211 driver
+      * relies on that controller-owned IO80211WorkLoop; do not create a second
+@@ -173,7 +197,7 @@
+     if (!_workLoop)
+         return failStart(provider, "IO80211 workloop unavailable after super::start");
+ 
+-    if (!setupInterrupt()) {
++    if (!_isUsb && !setupInterrupt()) {
+         return failStart(provider, "failed to set up interrupt");
+     }
+ 
+@@ -617,6 +641,14 @@
+     drainPendingFree();
+     releaseDMAEntries();
+ 
++#ifdef RTW_USB
++    if (_usbCore) {
++        rtl8188eu_hw_register(false);
++        rtl8188eu_core_destroy(_usbCore);
++        _usbCore = nullptr;
++    }
++#endif
++
+     if (_compatInitialized) {
+         rtw88_compat_exit();
+         _compatInitialized = false;
+@@ -875,10 +907,12 @@
+         _pmPowerState == kRTW88PowerStateOff)
+         return kIOReturnNotReady;
+     if (__atomic_load_n(&_dmaStopped, __ATOMIC_ACQUIRE)) {
+-        if (!_pciDev) return kIOReturnNotReady;
+-        _pciDev->setBusMasterEnable(true);
+-        if (!(_pciDev->configRead16(kIOPCIConfigCommand) & 0x0004))
+-            return kIOReturnNotReady;
++        if (!_isUsb) {
++            if (!_pciDev) return kIOReturnNotReady;
++            _pciDev->setBusMasterEnable(true);
++            if (!(_pciDev->configRead16(kIOPCIConfigCommand) & 0x0004))
++                return kIOReturnNotReady;
++        }
+         __atomic_store_n(&_dmaStopped, false, __ATOMIC_RELEASE);
+         if (_intrSrc) _intrSrc->enable();
+         if (_awdlManager) _awdlManager->scheduleDiscovery();
+--- a/src/kext/AirPortRTW.hpp
++++ b/src/kext/AirPortRTW.hpp
+@@ -356,6 +356,8 @@
+     RTW88DMAEntry *_dmaPendingFree = nullptr;
+     IOSimpleLock  *_pendingFreeLock = nullptr;
+     bool _superStarted      = false;
++    bool  _isUsb            = false;     /* RTW_USB: provider is IOUSBHostInterface (RTL8188EU), no PCI/MMIO/IRQ */
++    void *_usbCore          = nullptr;   /* RTL8188EUCore*, opaque here (see src/usb/rtl8188eu_bridge.h) */
+     bool _compatInitialized = false;
+     bool _ieeeStarted       = false;
+     bool _netifAttached     = false;
+--- a/AirPortRTW.kext/Contents/Info.plist
++++ b/AirPortRTW.kext/Contents/Info.plist
+@@ -44,6 +44,8 @@
+ 		<string>3.4</string>
+ 		<key>com.apple.iokit.IOPCIFamily</key>
+ 		<string>2.9</string>
++		<key>com.apple.iokit.IOUSBHostFamily</key>
++		<string>1.2</string>
+ 		<key>com.apple.iokit.IOSkywalkFamily</key>
+ 		<string>1.0</string>
+ 		<key>com.apple.kpi.bsd</key>
+@@ -104,6 +106,25 @@
+ 			<key>IOPCIMatch</key>
+ 			<string>0xC82110EC 0xB82110EC</string>
+ 		</dict>
++		<key>AirPortRTW_8188EU_USB</key>
++		<dict>
++			<key>CFBundleIdentifier</key>
++			<string>io.github.jomei9019.AirPortRTW</string>
++			<key>IOClass</key>
++			<string>AirPortRTW</string>
++			<key>IOProviderClass</key>
++			<string>IOUSBHostInterface</string>
++			<key>IOProbeScore</key>
++			<integer>5000</integer>
++			<key>idVendor</key>
++			<integer>3034</integer>
++			<key>idProduct</key>
++			<integer>33145</integer>
++			<key>bConfigurationValue</key>
++			<integer>1</integer>
++			<key>bInterfaceNumber</key>
++			<integer>0</integer>
++		</dict>
+ 	</dict>
+ </dict>
+ </plist>
+--- a/Makefile
++++ b/Makefile
+@@ -344,7 +344,30 @@
+ AIRPORT_KMOD_OBJ := $(BUILD_DIR)/airport/kmod_info.o
+ 
+ AIRPORT_ALL_OBJS := $(DRIVER_OBJS) $(CHIP_OBJS) $(COMPAT_OBJS) $(FIRMWARE_OBJS) $(AIRPORT_KMOD_OBJ) $(AIRPORT_KEXT_OBJS)
++
++# Optional RTL8188EU USB support (patches/0002). Enable with: make airport RTW_USB_SRC=/path/to/usbwifi-native-bringup/src/usb
++ifdef RTW_USB_SRC
++RTW_USB_BUILD := $(BUILD_DIR)/airport/usb
++RTW_USB_FW    := $(RTW_USB_SRC)/../../build/fw
++AIRPORT_USB_OBJS := $(RTW_USB_BUILD)/RTL8188EUCore.o $(RTW_USB_BUILD)/RTL8188EUBridge.o $(RTW_USB_BUILD)/RTL8188EUHw.o
++AIRPORT_ALL_OBJS += $(AIRPORT_USB_OBJS)
++AIRPORT_USB_DEFS := -DRTW_USB=1 -I$(RTW_USB_SRC)
++# Core/Bridge include IOUSBHost headers: no compat include path (it shadows system linux-ish headers), same flags as the probe kext.
++RTW_USB_CXXF := $(KEXT_FLAGS) -fapple-kext -std=c++17 -DKERNEL -Wno-deprecated-declarations -Wno-nullability-completeness -I$(RTW_USB_FW) -I$(RTW_USB_SRC)
+ 
++$(RTW_USB_BUILD)/RTL8188EUCore.o: $(RTW_USB_SRC)/RTL8188EUCore.cpp $(wildcard $(RTW_USB_SRC)/*.h*) | $(RTW_USB_BUILD)
++	@echo "  CXX  RTL8188EUCore.cpp"
++	$(CXX) $(RTW_USB_CXXF) -c $< -o $@
++$(RTW_USB_BUILD)/RTL8188EUBridge.o: $(RTW_USB_SRC)/RTL8188EUBridge.cpp $(wildcard $(RTW_USB_SRC)/*.h*) | $(RTW_USB_BUILD)
++	@echo "  CXX  RTL8188EUBridge.cpp"
++	$(CXX) $(RTW_USB_CXXF) -c $< -o $@
++$(RTW_USB_BUILD)/RTL8188EUHw.o: $(RTW_USB_SRC)/RTL8188EUHw.c $(wildcard $(RTW_USB_SRC)/*.h*) | $(RTW_USB_BUILD)
++	@echo "  CC   RTL8188EUHw.c"
++	$(CC) $(KEXT_FLAGS) $(COMPAT_FLAGS) -I$(RTW_USB_SRC) -include $(COMPAT_DIR)/rtw88_compat.h -DRTW88_MACOS=1 -D__KERNEL__ -Werror=implicit-function-declaration -Werror=int-conversion -Werror=incompatible-pointer-types -Wno-unused-variable -Wno-unused-function -c $< -o $@
++$(RTW_USB_BUILD):
++	mkdir -p $@
++endif
++
+ AIRPORT_LDFLAGS := \
+     $(ARCH) -static -nostdlib -Xlinker -kext \
+     $(MKSDK)/Library/x86_64/libkmod.a \
+@@ -362,7 +385,7 @@
+ 
+ $(BUILD_DIR)/airport/%.o: $(KEXT_SRC)/%.cpp | $(BUILD_DIR)/airport
+ 	@echo "  CXX  $(notdir $<)"
+-	$(CXX) $(KEXT_CXXFLAGS) -D__IO80211_TARGET=__MAC_13_0 -DUSE_APPLE_SUPPLICANT=1 -D__PRIVATE_SPI__ -c $< -o $@
++	$(CXX) $(KEXT_CXXFLAGS) -D__IO80211_TARGET=__MAC_13_0 -DUSE_APPLE_SUPPLICANT=1 -D__PRIVATE_SPI__ $(AIRPORT_USB_DEFS) -c $< -o $@
+ 
+ $(AIRPORT_KMOD_OBJ): $(KEXT_SRC)/kmod_info.c | $(BUILD_DIR)/airport
+ 	@echo "  CC   airport/kmod_info.c"
+--- a/src/compat/rtw88_compat.c
++++ b/src/compat/rtw88_compat.c
+@@ -1385,6 +1385,8 @@
+  * frames on the new channel. */
+ void rtw88_awdl_switch_channel(struct ieee80211_hw *hw)
+ {
++    /* Alternate core (USB): hw->priv is not an rtw_dev; plain channel hop only. */
++    if (g_rtw88_core_ops) { if (g_rtw88_core_ops->sw_scan_switch_channel) g_rtw88_core_ops->sw_scan_switch_channel(hw); return; }
+     if (!hw || !hw->priv) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     mutex_lock(&rtwdev->mutex);
+@@ -1401,6 +1403,8 @@
+  * the expensive RFK for normal association/channel setup. */
+ void rtw88_awdl_timeslice_switch_channel(struct ieee80211_hw *hw)
+ {
++    /* Alternate core (USB): hw->priv is not an rtw_dev; plain channel hop only. */
++    if (g_rtw88_core_ops) { if (g_rtw88_core_ops->sw_scan_switch_channel) g_rtw88_core_ops->sw_scan_switch_channel(hw); return; }
+     if (!hw || !hw->priv) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     mutex_lock(&rtwdev->mutex);

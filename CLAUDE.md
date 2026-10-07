@@ -63,6 +63,7 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   AirPortRTW.cpp has 43 PCI sites. The AirPort-RTW clone is gitignored here, so frontend changes must be kept as patch files in this repo.
   Data-frame txdesc: ported (2026-10-07, `src/usb/rtl8188eu_txdesc.h`, queue select, QoS, CCMP sec bits, rate param, RTS/short preamble; host test `make test-txdesc`; mgmt output byte-identical to the hardware-proven version; data frames NOT yet tested on hardware).
   **Data-frame txdesc PROVEN over the air (2026-10-07, v0.14.0):** `data_selftest` sent=5 submit_err=0, deauth/disassoc_to_us=5 (AP rejects our unassociated data frames = it decoded them), tx 10/10 errors=0; async_selftest rx 63/63, beacons=19, probe_resp=12 to_us=12. All hardware prerequisites for the frontend shim (WP4-6) are met.
+  **WP4/5 integration (2026-10-07):** `make airport-usb` builds one AirPortRTW kext that matches PCIe AND the USB dongle (patches `0001-core-ops`, `0002-usb-provider`; mac80211 face `src/usb/RTL8188EUHw.c`, bridge `RTL8188EUBridge.cpp`). Links; NOT yet run on hardware. Test plan: `docs/stage5-test.md`. Do not load RTL8188EUProbe together with it.
   Deferred: phy_iq_calibrate, set_crystal_cap, 40 MHz, RSSI/phystats, TX report, A-MPDU/HT40/SGI txdesc bits, driver-side rate adaptation (ra_info; data rate is a caller-supplied parameter, GUESS: conservative basic rate until RA exists).
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 

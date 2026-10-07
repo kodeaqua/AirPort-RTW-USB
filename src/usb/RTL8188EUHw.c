@@ -258,7 +258,8 @@ static int r8_probe(void *transport)
     g_r8.hw_inited = true;
     rtl8188eu_br_get_mac(g_r8.core, g_r8.mac);
 
-    hw = ieee80211_alloc_hw(0, &r8188eu_ops);
+    /* hw->priv is never an rtw_dev here; 256 spare bytes so a stray cast cannot run off the allocation. */
+    hw = ieee80211_alloc_hw(256, &r8188eu_ops);
     if (!hw) return -ENOMEM;
     g_r8.hw = hw;
     r8_fill_bands();

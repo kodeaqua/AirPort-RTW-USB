@@ -7,6 +7,26 @@
 
 extern "C" {
 
+bool rtl8188eu_is_usb_provider(void *provider) { return OSDynamicCast(IOUSBHostInterface, (IOService *)provider) != nullptr; }
+
+void *rtl8188eu_core_create(void *owner, void *provider)
+{
+    RTL8188EUCore *c = OSTypeAlloc(RTL8188EUCore);
+    if (!c) return nullptr;
+    if (!c->init() || !c->attach((IOService *)owner, OSDynamicCast(IOUSBHostInterface, (IOService *)provider))) {
+        c->release();
+        return nullptr;
+    }
+    return c;
+}
+
+void rtl8188eu_core_destroy(void *core)
+{
+    if (!core) return;
+    C(core)->closeAll();
+    C(core)->release();
+}
+
 int rtl8188eu_br_init_hw(void *core) { return C(core)->initHardware(); }
 
 void rtl8188eu_br_get_mac(void *core, uint8_t mac[6]) { C(core)->getMac(mac); }
