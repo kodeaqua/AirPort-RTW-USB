@@ -33,7 +33,19 @@ Misc: `rtw88_compat_init/exit`, `rtw88_copy_log`, `rtw88_debug_dump_tx_state_to`
 3. Replace `rtw88_pci_chip_table` lookup in `start()` by `ops->probe()`.
 4. Stub (not implement) AWDL, `rtw88_trigger_interrupt`, and PCI-only debug helpers for USB.
 
-## Open questions (must be answered from source before coding)
-- Which `rtw88_*` helpers live in `compat/rtw88_compat.c` and dereference rtw88 structs (`rtw_dev`) directly, so a fake `rtw_dev` would be needed?
-- What the frontend assumes about `ieee80211_hw->priv` layout (it casts to `rtw_dev`).
-- Data-frame txdesc (QoS, rate, key) is still deferred in the core; the frontend needs it for data after association.
+## Answers from `compat/rtw88_compat.c` (1626 lines, read 2026-10-07)
+- Link/scan helpers deref `rtw_dev` directly and call rtw88 core internals (`rtw_set_channel`, `rtw_vif_port_config`,
+  `rtw_chip_prepare_tx`, `rtw_core_scan_start/complete`, `rtwdev->mutex/hal.rcr/dm_info/need_rfk`): `rtw88_sw_scan_start/complete/switch_channel`,
+  `rtw88_connect_hw_setup`, `rtw88_restore_interface/connected_hw(_timeslice)`, `rtw88_set_station_mac`, `rtw88_hw_scan_supported`,
+  `rtw88_is_scanning`, `rtw88_force_wifi_only`, `rtw88_awdl_*`.
+- Info helpers deref `rtwdev->fw/chip/stats/efuse/hal`: `rtw88_get_fw_version/chip_name/stats/tx_nss`.
+- PCI-only: `rtw88_be_tx_avail/busy`, `rtw88_trigger_interrupt`, `rtw88_reenable_interrupt`, `rtw88_debug_dump_tx_state*`
+  (use `rtw_pci` ring/HISR registers; `g_irq_dev_id` cast to `rtw_dev`).
+- Conclusion: faking a `rtw_dev` is NOT viable (too many fields, and those helpers would run rtw88 PHY code on 8188EU registers).
+  The helpers must be dispatched through the core-ops vtable: PCI ops = current bodies unchanged, USB ops = our core.
+  So `RTW88CoreOps` needs, beyond probe/remove: scan_start/complete, switch_channel, connect_setup, restore_*, set_station_mac,
+  info getters, tx_avail/busy, is_scanning. Roughly 20 entries; frontend call sites are mechanical renames.
+
+## Still open
+- Resolved: the frontend only casts `hw->priv` to `rtw_dev*` once (RTW88IEEE80211.cpp:859) and passes it opaquely to the `rtw88_get_*` helpers; no field access. So `_rtwdev` can be an opaque USB core pointer once those helpers go through the vtable.
+- Data-frame txdesc (QoS, rate, key) is still deferred in the core; needed for data after association.
