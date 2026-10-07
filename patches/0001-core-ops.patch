@@ -1,0 +1,371 @@
+diff --git a/src/compat/rtw88_compat.c b/src/compat/rtw88_compat.c
+index 43ea8ad..54dd083 100644
+--- a/src/compat/rtw88_compat.c
++++ b/src/compat/rtw88_compat.c
+@@ -3,6 +3,7 @@
+ // Compiled as C with -mkernel; no userspace headers allowed.
+ 
+ #include "rtw88_compat.h"
++#include "rtw88_core_ops.h"
+ #include <stdarg.h>
+ #include <kern/thread_call.h>
+ 
+@@ -524,7 +525,8 @@ static void rtw88_irq_work_fn(struct work_struct *work)
+ /* BE-ring free-slot count for kext flow control. */
+ extern u32 rtw88_be_ring_avail(struct rtw_dev *rtwdev);
+ u32 rtw88_be_tx_avail(void)
+-{
++{    if (RTW88_OPS(tx_avail)) return g_rtw88_core_ops->tx_avail();
++
+     if (!g_irq_dev_id) return 0;
+     return rtw88_be_ring_avail((struct rtw_dev *)g_irq_dev_id);
+ }
+@@ -1220,7 +1222,8 @@ void rtw88_debug_dump_tx_state(void)
+ /* True while the BE software ring holds queued frames. Reads only the SW
+  * ring counters (no register access), as the TX-state dump does. */
+ int rtw88_be_tx_busy(void)
+-{
++{    if (RTW88_OPS(tx_busy)) return g_rtw88_core_ops->tx_busy();
++
+     if (!g_irq_dev_id) return 0;
+     u32 sw_wp = 0, sw_rp = 0, qlen = 0;
+     rtw88_get_be_ring_state((struct rtw_dev *)g_irq_dev_id, &sw_wp, &sw_rp, &qlen);
+@@ -1291,14 +1294,16 @@ void rtw88_debug_dump_tx_state_to(int to_ring)
+ }
+ 
+ bool rtw88_is_scanning(void)
+-{
++{    if (RTW88_OPS(is_scanning)) return g_rtw88_core_ops->is_scanning();
++
+     if (!g_rtw88_hw || !g_rtw88_hw->priv) return false;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)g_rtw88_hw->priv;
+     return test_bit(RTW_FLAG_SCANNING, rtwdev->flags);
+ }
+ 
+ bool rtw88_hw_scan_supported(struct ieee80211_hw *hw)
+-{
++{    if (RTW88_OPS(hw_scan_supported)) return g_rtw88_core_ops->hw_scan_supported(hw);
++
+     if (!hw || !hw->priv) return false;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     /* The macOS caller does not populate the probe SSIDs/IEs required by
+@@ -1311,7 +1316,8 @@ bool rtw88_hw_scan_supported(struct ieee80211_hw *hw)
+ }
+ 
+ void rtw88_sw_scan_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+-{
++{    if (RTW88_OPS(sw_scan_start)) { g_rtw88_core_ops->sw_scan_start(hw, vif); return; }
++
+     if (!hw || !hw->priv || !vif) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -1327,7 +1333,8 @@ void rtw88_sw_scan_start(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+ /* core_start resets MAC registers. Like rtw_leave_ips, restore the existing
+  * port after power-up; calling add_interface again would leak a port/mac_id. */
+ int rtw88_restore_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+-{
++{    if (RTW88_OPS(restore_interface)) return g_rtw88_core_ops->restore_interface(hw, vif);
++
+     if (!hw || !hw->priv || !vif) return -EINVAL;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -1343,7 +1350,8 @@ int rtw88_restore_interface(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+ int rtw88_set_station_mac(struct ieee80211_hw *hw,
+                           struct ieee80211_vif *vif,
+                           const uint8_t *mac)
+-{
++{    if (RTW88_OPS(set_station_mac)) return g_rtw88_core_ops->set_station_mac(hw, vif, mac);
++
+     if (!hw || !hw->priv || !vif || !mac)
+         return -EINVAL;
+ 
+@@ -1362,7 +1370,8 @@ int rtw88_set_station_mac(struct ieee80211_hw *hw,
+ }
+ 
+ void rtw88_sw_scan_switch_channel(struct ieee80211_hw *hw)
+-{
++{    if (RTW88_OPS(sw_scan_switch_channel)) { g_rtw88_core_ops->sw_scan_switch_channel(hw); return; }
++
+     if (!hw || !hw->priv) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+ 
+@@ -1400,7 +1409,8 @@ void rtw88_awdl_timeslice_switch_channel(struct ieee80211_hw *hw)
+ }
+ 
+ void rtw88_sw_scan_complete(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+-{
++{    if (RTW88_OPS(sw_scan_complete)) { g_rtw88_core_ops->sw_scan_complete(hw, vif); return; }
++
+     if (!hw || !hw->priv || !vif) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+ 
+@@ -1425,7 +1435,8 @@ void rtw88_sw_scan_complete(struct ieee80211_hw *hw, struct ieee80211_vif *vif)
+  * the efuse struct) and BEFORE rtw_core_start.
+  */
+ void rtw88_force_wifi_only(void)
+-{
++{    if (RTW88_OPS(force_wifi_only)) { g_rtw88_core_ops->force_wifi_only(); return; }
++
+     if (!g_rtw88_hw || !g_rtw88_hw->priv) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)g_rtw88_hw->priv;
+     if (rtwdev->efuse.btcoex) {
+@@ -1454,7 +1465,8 @@ void rtw88_force_wifi_only(void)
+ void rtw88_connect_hw_setup(struct ieee80211_hw *hw,
+                              struct ieee80211_vif *vif,
+                              const uint8_t *bssid)
+-{
++{    if (RTW88_OPS(connect_hw_setup)) { g_rtw88_core_ops->connect_hw_setup(hw, vif, bssid); return; }
++
+     if (!hw || !hw->priv || !vif || !bssid) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -1512,7 +1524,8 @@ void rtw88_connect_hw_setup(struct ieee80211_hw *hw,
+ void rtw88_restore_connected_hw(struct ieee80211_hw *hw,
+                                  struct ieee80211_vif *vif,
+                                  const uint8_t *bssid)
+-{
++{    if (RTW88_OPS(restore_connected_hw)) { g_rtw88_core_ops->restore_connected_hw(hw, vif, bssid); return; }
++
+     if (!hw || !hw->priv || !vif || !bssid) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -1546,7 +1559,8 @@ void rtw88_restore_connected_hw(struct ieee80211_hw *hw,
+ void rtw88_restore_connected_hw_timeslice(struct ieee80211_hw *hw,
+                                           struct ieee80211_vif *vif,
+                                           const uint8_t *bssid)
+-{
++{    if (RTW88_OPS(restore_connected_hw_timeslice)) { g_rtw88_core_ops->restore_connected_hw_timeslice(hw, vif, bssid); return; }
++
+     if (!hw || !hw->priv || !vif || !bssid) return;
+     struct rtw_dev *rtwdev = (struct rtw_dev *)hw->priv;
+     struct rtw_vif *rtwvif = (struct rtw_vif *)vif->drv_priv;
+@@ -1562,7 +1576,8 @@ void rtw88_restore_connected_hw_timeslice(struct ieee80211_hw *hw,
+ }
+ 
+ void rtw88_get_fw_version(struct rtw_dev *rtwdev, uint16_t *version, uint8_t *sub_version)
+-{
++{    if (RTW88_OPS(get_fw_version)) { g_rtw88_core_ops->get_fw_version(rtwdev, version, sub_version); return; }
++
+     if (version) *version = 0;
+     if (sub_version) *sub_version = 0;
+     if (!rtwdev) return;
+@@ -1571,7 +1586,8 @@ void rtw88_get_fw_version(struct rtw_dev *rtwdev, uint16_t *version, uint8_t *su
+ }
+ 
+ void rtw88_get_chip_name(struct rtw_dev *rtwdev, char *name_buf, size_t buf_sz)
+-{
++{    if (RTW88_OPS(get_chip_name)) { g_rtw88_core_ops->get_chip_name(rtwdev, name_buf, buf_sz); return; }
++
+     if (!name_buf || buf_sz == 0) return;
+     name_buf[0] = '\0';
+     if (!rtwdev || !rtwdev->chip) {
+@@ -1589,7 +1605,8 @@ void rtw88_get_chip_name(struct rtw_dev *rtwdev, char *name_buf, size_t buf_sz)
+ }
+ 
+ void rtw88_get_stats(struct rtw_dev *rtwdev, uint32_t *tx_bytes, uint32_t *rx_bytes)
+-{
++{    if (RTW88_OPS(get_stats)) { g_rtw88_core_ops->get_stats(rtwdev, tx_bytes, rx_bytes); return; }
++
+     if (tx_bytes) *tx_bytes = 0;
+     if (rx_bytes) *rx_bytes = 0;
+     if (!rtwdev) return;
+@@ -1598,7 +1615,8 @@ void rtw88_get_stats(struct rtw_dev *rtwdev, uint32_t *tx_bytes, uint32_t *rx_by
+ }
+ 
+ uint8_t rtw88_get_tx_nss(struct rtw_dev *rtwdev)
+-{
++{    if (RTW88_OPS(get_tx_nss)) return g_rtw88_core_ops->get_tx_nss(rtwdev);
++
+     if (!rtwdev) return 1;
+ 
+     /* main.c normalises efuse.hw_cap.nss against rf_path_num during
+@@ -1624,3 +1642,7 @@ uint32_t rtw88_read_log(char *out_buf, uint32_t max_len)
+     IOSimpleLockUnlock(rtw88_log_lock);
+     return read;
+ }
++
++/* Optional core dispatch (see rtw88_core_ops.h). NULL = original rtw88/PCIe behavior. */
++const struct rtw88_core_ops *g_rtw88_core_ops = NULL;
++void rtw88_set_core_ops(const struct rtw88_core_ops *ops) { g_rtw88_core_ops = ops; }
+diff --git a/src/compat/rtw88_core_ops.h b/src/compat/rtw88_core_ops.h
+new file mode 100644
+index 0000000..c78f0f5
+--- /dev/null
++++ b/src/compat/rtw88_core_ops.h
+@@ -0,0 +1,66 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * rtw88_core_ops.h - optional core dispatch table.
++ *
++ * When no table is registered (g_rtw88_core_ops == NULL, the PCIe default) every helper in
++ * rtw88_compat.c runs its original rtw88 body unchanged. A second core (e.g. the USB RTL8188EU
++ * core) registers a table; any non-NULL entry then replaces the matching helper. Entries left
++ * NULL fall through to the rtw88 body, so a core must fill every entry it needs.
++ */
++#ifndef RTW88_CORE_OPS_H
++#define RTW88_CORE_OPS_H
++
++#include <stdbool.h>
++#include <stddef.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct ieee80211_hw;
++struct ieee80211_vif;
++struct rtw_dev;
++
++struct rtw88_core_ops {
++    const char *name;
++
++    /* lifecycle: replace rtw_pci_probe()/rtw_pci_remove() in RTW88IEEE80211::start()/stop().
++     * probe() must register its ieee80211_hw with rtw88_register_hw(). */
++    int  (*probe)(void *transport);
++    void (*remove)(void *transport);
++
++    /* link / scan helpers (original bodies deref rtw_dev) */
++    bool (*is_scanning)(void);
++    bool (*hw_scan_supported)(struct ieee80211_hw *hw);
++    void (*sw_scan_start)(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
++    void (*sw_scan_switch_channel)(struct ieee80211_hw *hw);
++    void (*sw_scan_complete)(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
++    int  (*restore_interface)(struct ieee80211_hw *hw, struct ieee80211_vif *vif);
++    int  (*set_station_mac)(struct ieee80211_hw *hw, struct ieee80211_vif *vif, const uint8_t *mac);
++    void (*connect_hw_setup)(struct ieee80211_hw *hw, struct ieee80211_vif *vif, const uint8_t *bssid);
++    void (*restore_connected_hw)(struct ieee80211_hw *hw, struct ieee80211_vif *vif, const uint8_t *bssid);
++    void (*restore_connected_hw_timeslice)(struct ieee80211_hw *hw, struct ieee80211_vif *vif, const uint8_t *bssid);
++    void (*force_wifi_only)(void);
++
++    /* info getters (rtwdev is opaque to the frontend) */
++    void    (*get_fw_version)(struct rtw_dev *dev, uint16_t *version, uint8_t *sub_version);
++    void    (*get_chip_name)(struct rtw_dev *dev, char *buf, size_t sz);
++    void    (*get_stats)(struct rtw_dev *dev, uint32_t *tx_bytes, uint32_t *rx_bytes);
++    uint8_t (*get_tx_nss)(struct rtw_dev *dev);
++
++    /* TX flow control (PCI: BE ring; USB: free async TX buffers) */
++    uint32_t (*tx_avail)(void);
++    int      (*tx_busy)(void);
++};
++
++extern const struct rtw88_core_ops *g_rtw88_core_ops;
++void rtw88_set_core_ops(const struct rtw88_core_ops *ops);
++
++/* True when ops is registered and the named entry is set. */
++#define RTW88_OPS(member) (g_rtw88_core_ops && g_rtw88_core_ops->member)
++
++#ifdef __cplusplus
++}
++#endif
++#endif
+diff --git a/src/kext/RTW88IEEE80211.cpp b/src/kext/RTW88IEEE80211.cpp
+index 2b79cb6..a099b2c 100644
+--- a/src/kext/RTW88IEEE80211.cpp
++++ b/src/kext/RTW88IEEE80211.cpp
+@@ -22,6 +22,7 @@ static mbuf_t rtw88_make_packet_mbuf(const void *src, uint32_t len);
+ 
+ extern "C" {
+ #include "../compat/rtw88_compat.h"
++#include "../compat/rtw88_core_ops.h"
+ 
+ /* Linux driver public API */
+ int  rtw_core_init(struct rtw_dev *rtwdev);
+@@ -493,6 +494,15 @@ static const struct rtw88_pci_id_entry rtw88_pci_chip_table[] = {
+     { 0, nullptr }
+ };
+ 
++/* Core teardown: alternate core if one is registered, otherwise PCI. */
++static void rtw88_remove_core(struct pci_dev *pdev)
++{
++    if (RTW88_OPS(remove))
++        g_rtw88_core_ops->remove(pdev);
++    else
++        rtw_pci_remove(pdev);
++}
++
+ /* Forward declaration of hw_callbacks struct from compat.c */
+ struct rtw88_hw_callbacks {
+     void (*rx_frame)(void *kext_hw, struct sk_buff *skb);
+@@ -817,33 +827,40 @@ IOReturn RTW88IEEE80211::start()
+ {
+     RTW88_STAGE("IEEE80211::start entered");
+ 
+-    /* Look up chip info from PCI device ID */
+-    const struct rtw_chip_info *chip = nullptr;
+-    for (int i = 0; rtw88_pci_chip_table[i].device != 0; i++) {
+-        if (rtw88_pci_chip_table[i].device == _pcidev->device) {
+-            chip = rtw88_pci_chip_table[i].chip;
+-            break;
++    int ret;
++    if (RTW88_OPS(probe)) {
++        /* Alternate core (e.g. USB): it owns chip selection and hw allocation. */
++        RTW88_STAGE("calling core ops probe (%s)", g_rtw88_core_ops->name);
++        ret = g_rtw88_core_ops->probe(_pcidev);
++    } else {
++        /* Look up chip info from PCI device ID */
++        const struct rtw_chip_info *chip = nullptr;
++        for (int i = 0; rtw88_pci_chip_table[i].device != 0; i++) {
++            if (rtw88_pci_chip_table[i].device == _pcidev->device) {
++                chip = rtw88_pci_chip_table[i].chip;
++                break;
++            }
+         }
+-    }
+-    if (!chip) {
+-        IOLog("rtw88: unknown PCI device %04x — cannot probe\n", _pcidev->device);
+-        return kIOReturnUnsupported;
+-    }
+-    RTW88_STAGE("chip matched: device=%04x", _pcidev->device);
++        if (!chip) {
++            IOLog("rtw88: unknown PCI device %04x — cannot probe\n", _pcidev->device);
++            return kIOReturnUnsupported;
++        }
++        RTW88_STAGE("chip matched: device=%04x", _pcidev->device);
+ 
+-    const struct pci_device_id fake_id = {
+-        .vendor      = _pcidev->vendor,
+-        .device      = _pcidev->device,
+-        .subvendor   = PCI_ANY_ID,
+-        .subdevice   = PCI_ANY_ID,
+-        .driver_data = (unsigned long)chip,
+-    };
++        const struct pci_device_id fake_id = {
++            .vendor      = _pcidev->vendor,
++            .device      = _pcidev->device,
++            .subvendor   = PCI_ANY_ID,
++            .subdevice   = PCI_ANY_ID,
++            .driver_data = (unsigned long)chip,
++        };
+ 
+-    RTW88_STAGE("calling rtw_pci_probe");
+-    int ret = rtw_pci_probe(_pcidev, &fake_id);
+-    RTW88_STAGE("rtw_pci_probe returned %d", ret);
++        RTW88_STAGE("calling rtw_pci_probe");
++        ret = rtw_pci_probe(_pcidev, &fake_id);
++        RTW88_STAGE("rtw_pci_probe returned %d", ret);
++    }
+     if (ret != 0) {
+-        IOLog("rtw88: rtw_pci_probe failed: %d\n", ret);
++        IOLog("rtw88: core probe failed: %d\n", ret);
+         return kIOReturnError;
+     }
+ 
+@@ -930,7 +947,7 @@ fail_vif:
+         _vif = nullptr;
+     }
+ fail_probe:
+-    rtw_pci_remove(_pcidev);
++    rtw88_remove_core(_pcidev);
+     _rtwdev = nullptr;
+     _hw = nullptr;
+     _powered = false;
+@@ -979,7 +996,7 @@ void RTW88IEEE80211::stop()
+         _hw->ops->stop(_hw, false);
+     _powered = false;
+ 
+-    if (_pcidev) rtw_pci_remove(_pcidev);
++    if (_pcidev) rtw88_remove_core(_pcidev);
+     _rtwdev = nullptr;
+     _hw     = nullptr;
+     _state  = RTW88_STATE_IDLE;

@@ -26,3 +26,10 @@ Done in the probe kext (compiles, untested on hardware): WP1 async RX engine (no
 WP3 link regs / CCMP CAM / H2C media status (no configure_filter, no sta_add macid allocation). WP4-6 not started: they depend on TX/RX being proven (docs/test-checklist.md).
 Measured for WP4: ~45 undefined `rtw88_*`/`rtw_pci_*` symbols from the frontend objects; PCI sites in RTW88IEEE80211.cpp ~8, AirPortRTW.cpp 43.
 Proposed WP4 shape: a small `RTW88CoreOps` hook (patch file in this repo, applied to the gitignored clone) replacing the rtw_pci_probe/chip-table block in `start()`.
+
+## Status 2026-10-07 (WP4 step 1: core ops hook)
+`patches/0001-core-ops.patch` (apply in `AirPort-RTW/`: `git apply ../patches/0001-core-ops.patch`) adds `src/compat/rtw88_core_ops.h`
+(`struct rtw88_core_ops`, `rtw88_set_core_ops()`), dispatches 17 `rtw88_*` helpers in `rtw88_compat.c` through it when a table is registered,
+and routes probe/remove in `RTW88IEEE80211::start()/stop()`. With no table registered the original PCIe code runs unchanged.
+`make airport` passes with the patch applied. Not run on hardware (PCIe hardware not available here). Next: WP4 step 2, USB core ops
+implementation + `ieee80211_hw/ops` face over the probe core (src/usb/), then WP5 provider (frontend `create()` still takes PCI types).
