@@ -80,3 +80,9 @@ Ported from `build/src/core.c` (init_device 3958+), `8188e.c`, `8188f.c`; all co
 - **RFSW mismatch (0x03000760 vs 0x07000760) = real bug in our port**, fixed in v0.8.1: Linux (core.c:4058-4061) also ORs
   `FPGA0_RF_PAPE << FPGA0_RF_BD_CTRL_SHIFT` (bit 26); we only set the unshifted PAPE.
 - **HWSEQ_CTRL (0x423) wrote 0xff, read 0x7f: unexplained.** Same as Linux write; guess: bit 7 not readable/hardware-owned. Not a blocker.
+
+## 3d: channel switch (v0.9.0, written 2026-10-07, awaiting hardware test)
+- `setChannel()` ports `rtl8188eu_config_channel` (8188e.c:423), **20 MHz only**; order per core.c:6838-6840: set_tx_power, then config_channel.
+  Writes BW_OPMODE 20MHz, clears FPGA0/FPGA1 RF_MODE bit0, RF18 channel (mask 0x3ff) then BW bits (10|11).
+- Probe switches to ch6 then ch11 and logs `set_channel OK ...: RF18[11:0] ch6=0xc06 ch11=0xc0b` (expected values are my computation, not observed).
+- Not done: 40 MHz, phy_iq_calibrate, RX path (bulk IN), TX.

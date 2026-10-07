@@ -102,6 +102,8 @@ enum {
     kRegTbttProhibit = 0x0540, kRegDriverEarlyInt = 0x0558, kDriverEarlyIntTime = 5,
     kRegBeaconDmaTime = 0x0559, kBeaconDmaAtimeIntTime = 2, kRegBeaconTcfg = 0x0510,
     kRegPktVoViLifeTime = 0x04c0, kRegPktBeBkLifeTime = 0x04c2,
+    kRegBwOpmode = 0x0603, kBwOpmode20Mhz = 1u << 2, kRegFpga1RfMode = 0x0900,
+    kRf6052ModeAgChannelMask = 0x3ff, kRf6052ModeAgBwMask = (1u << 10) | (1u << 11), kRf6052ModeAgBw20Mhz8723b = (1u << 10) | (1u << 11),
     kRegFpga0RfMode = 0x0800, kFpgaRfModeCck = 1u << 24, kFpgaRfModeOfdm = 1u << 25,
     kRegCamCmd = 0x0670, kCamCmdPolling = 1u << 31,
     // Stage 3c-5 tail of init_device (regs.h / rtl8xxxu.h / 8188f.c, verified 2026-10-07)
@@ -811,6 +813,28 @@ IOReturn RTL8188EUProbe::setTxPower(int channel, bool ht40)
 }
 
 // rtl8723a_phy_lc_calibrate (core.c:3498), RF path A only (tx_paths == 1; has_s0s1 is not set for 8188EU).
+// Stage 3d: rtl8188eu_config_channel (8188e.c:423), 20 MHz only (width 20/20_NOHT branch). 40 MHz is NOT ported yet.
+// Unlike gen1/gen2 it does not touch SIFS/ANALOG2. rf_paths == 1 for 8188EU, so only path A.
+IOReturn RTL8188EUProbe::setChannel(int channel)
+{
+    IOReturn r; uint8_t opmode; uint32_t v32;
+    if (channel < 1 || channel > 14) return kIOReturnBadArgument;
+    if ((r = setTxPower(channel, false)) != kIOReturnSuccess) return r;   // Linux order: set_tx_power, then config_channel (core.c:6838-6840)
+    if ((r = read8(kRegBwOpmode, &opmode)) != kIOReturnSuccess) return r;
+    if ((r = write8(kRegBwOpmode, opmode | kBwOpmode20Mhz)) != kIOReturnSuccess) return r;
+    if ((r = read32(kRegFpga0RfMode, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpga0RfMode, v32 & ~1u)) != kIOReturnSuccess) return r;      // ~FPGA_RF_MODE
+    if ((r = read32(kRegFpga1RfMode, &v32)) != kIOReturnSuccess) return r;
+    if ((r = write32(kRegFpga1RfMode, v32 & ~1u)) != kIOReturnSuccess) return r;
+    if ((r = rfRead(kRf6052RegModeAg, &v32)) != kIOReturnSuccess) return r;
+    v32 = (v32 & ~kRf6052ModeAgChannelMask) | (uint32_t)channel;
+    if ((r = rfWrite(kRf6052RegModeAg, v32)) != kIOReturnSuccess) return r;
+    if ((r = rfRead(kRf6052RegModeAg, &v32)) != kIOReturnSuccess) return r;
+    v32 = (v32 & ~kRf6052ModeAgBwMask) | kRf6052ModeAgBw20Mhz8723b;
+    if ((r = rfWrite(kRf6052RegModeAg, v32)) != kIOReturnSuccess) return r;
+    return kIOReturnSuccess;
+}
+
 IOReturn RTL8188EUProbe::phyLcCalibrate()
 {
     IOReturn r; uint32_t lstf, rfAmode = 0, v32;
@@ -976,6 +1000,14 @@ bool RTL8188EUProbe::start(IOService *provider)
                                         IOLog(LOGP "init_tail %s (0x%08x): 0xe08=0x%08x 0xe00=0x%08x RF18=0x%05x (LC cal bit15 should be clear) "
                                               "RF42=0x%05x NAV_UPPER=0x%02x (expect 0xeb) HWSEQ=0x%02x (expect 0xff)\n",
                                               tr == kIOReturnSuccess ? "OK" : "FAILED", tr, agc, ofdmr, rf18, rf42, nav, hw);
+                                        if (tr == kIOReturnSuccess) {
+                                            // Stage 3d: channel switch 6 then 11, read RF18 back (low 12 bits only; bit 15 self-clears).
+                                            uint32_t a = 0, b = 0;
+                                            IOReturn c1 = setChannel(6); rfRead(kRf6052RegModeAg, &a);
+                                            IOReturn c2 = setChannel(11); rfRead(kRf6052RegModeAg, &b);
+                                            IOLog(LOGP "set_channel %s (0x%08x/0x%08x): RF18[11:0] ch6=0x%03x (expect 0xc06) ch11=0x%03x (expect 0xc0b)\n",
+                                                  (c1 == kIOReturnSuccess && c2 == kIOReturnSuccess) ? "OK" : "FAILED", c1, c2, a & 0xfff, b & 0xfff);
+                                        }
                                     }
                                 }
                             }

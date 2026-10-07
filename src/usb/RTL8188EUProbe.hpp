@@ -68,6 +68,7 @@ private:
 
     // Stage 3c-5: set_tx_power (8188f.c:358), LC calibration (core.c:3498) and the tail of init_device.
     IOReturn setTxPower(int channel, bool ht40);
+    IOReturn setChannel(int channel);
     IOReturn phyLcCalibrate();
     IOReturn initTail();
 
