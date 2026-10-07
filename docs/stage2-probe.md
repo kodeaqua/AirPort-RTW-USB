@@ -132,3 +132,23 @@ If FAILED: send the `initMac:` line (names the register). Do not proceed to BB i
 Next (3c-2): RF register accessor + `init_phy_bb`.
 
 Hardware result: `init_mac OK (0x00000000)`, all three readbacks matched, `firmware RUNNING` still present.
+
+## v0.6.0 — Stage 3c-2: RF accessor + init_phy_bb
+Ports (all verified against torvalds/linux master, fetched 2026-10-07):
+- `rfRead` / `rfWrite`, RF path A only: `rtl8xxxu_read_rfreg` (core.c:867, HSSI_PARM2 edge-read sequence, PI bit selects
+  HSPI 0x8b8 vs LSSI 0x8a0 readback) and `rtl8xxxu_write_rfreg` (core.c:912, LSSI_PARM 0x840).
+- `initPhyBb`: `rtl8188eu_init_phy_bb` (8188e.c:582): SYS_FUNC |= BB_GLB_RSTN|BBRSTB|DIO_RF, RF_CTRL = 0x07, 8-bit
+  SYS_FUNC = USBA|USBD|BB_GLB_RSTN|BBRSTB, then `rtl8188eu_phy_init_table` (193 entries) and `rtl8188e_agc_table`
+  (131 entries) as 32-bit writes with 1 us delay (`rtl8xxxu_init_phy_regs`). Tables generated mechanically
+  (`scripts/gen-rtl8188eu-tables.py`, entry counts cross-checked against the source).
+- Not ported on purpose: 1T2R patch block (8188EU is 1T1R), RTL8192E quirk, and `set_crystal_cap(default_crystal_cap)`
+  at the end of `rtl8xxxu_init_phy_bb` (core.c:2376). The latter needs efuse `xtal_k`; deferred to 3c-5.
+
+Expected new log line (after `init_mac OK`):
+```
+init_phy_bb OK (0x00000000): 0x800=0x........ 0x804=0x........ 0x808=0x........; rf_read(A,0x00) = 0x.....
+```
+Pass = `init_phy_bb OK` with `firmware RUNNING` and `init_mac OK` still present. BB/RF readbacks are informational
+(the RF read happens before the RF table is written, so its value is not checked; a FAILED read means the HSSI path
+is broken and matters for 3c-3). If FAILED: send the `initPhyRegs:` line (names the register).
+Next (3c-3): `init_phy_rf` (radio A table).
