@@ -102,3 +102,13 @@ Bundle: v0.8.1 (RFSW PAPE fix) + v0.9.0 (setChannel) + RX scan, none of 0.8.1/0.
 - AP `Rumah 4G` (58:4b:bc:38:f8:90, ds_ch=11) heard on ch9-13 only (consistent with 20 MHz leakage of a ch11 AP); ch2-8 empty. Descriptor parsing, SSID/DS-channel parsing and channel switch are therefore validated.
 - Anomaly: `heard_on=1` is almost certainly a stale frame left in the RX FIFO from the previous ch11 (set_channel test). Fix: drain bulk IN after each setChannel before counting.
 - Open: only 1 unique AP; unknown whether other 2.4 GHz APs exist nearby or RX sensitivity is low (phy_iq_calibrate / set_crystal_cap still not done).
+
+## 4b: active scan / first TX (v0.11.0, written 2026-10-07, awaiting hardware test)
+Source: Linux rtl8xxxu `core.c` fill_txdesc_v3 (:5378), rtl8xxxu_tx (:5456), calc_tx_desc_csum (:5073), queue_select (:5054), set_mac (:3558), `rtl8xxxu.h` txdesc32 + bit defs. Re-read 2026-10-07.
+- `setMacAddr()`: efuse MAC (0xD7) -> REG_MACID 0x610 (Linux does this in add_interface). Needed so unicast probe responses pass RCR_ACCEPT_PHYS_MATCH.
+- `txMgmt()`: 32-byte txdesc32, MGNT queue (0x12) -> `_bulkOut[0]` (init_queue_priority case 2, mgp=0), rate 1M, driver-rate, retry limit 6, AGG_BREAK, antenna A|B (+C in txdw7), XOR checksum.
+  Not ported: rate adaptation, TX report (C2H) handling, QoS/data frames, keys, AMPDU.
+- `rxScan()` now sends a broadcast probe request at the start of each channel's dwell. New log fields: `probe_resp`, `tx_ok`, `tx_fail`, last tx status.
+- Pass: `set_mac OK`, `tx_ok=1` per channel, and `probe_resp>0` on the channel(s) where "Rumah 4G" (ch11) lives. That proves TX descriptor + queue + antenna + RF TX path.
+  `tx_ok=1` but probe_resp=0 everywhere: USB write works but chip did not transmit (descriptor/queue/txpower/MAC address suspect). `tx_fail`: USB pipe problem.
+- Risk note: first transmission from this device. Probe requests are standard broadcast management frames; no association is attempted.

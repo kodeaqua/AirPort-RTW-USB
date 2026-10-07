@@ -122,6 +122,14 @@ enum {
     kFwhwTxqCtrlXmitMgmtAck = 1u << 12,
     // struct rtl8188eu_efuse (rtl8xxxu.h)
     kEfuseRtlId       = 0x8129, kEfuseOffMac = 0xD7,
+    // Stage 4b TX. REG_MACID: regs.h:791. txdesc32 bits: rtl8xxxu.h:474-584 (Linux source read 2026-10-07).
+    kRegMacid = 0x0610,
+    kTxDescSize = 32, kTxQueueMgnt = 0x12,
+    kTxdw0Own = 1u << 7, kTxdw0Fs = 1u << 3, kTxdw0Ls = 1u << 2, kTxdw0Bmc = 1u << 0,
+    kTxdw2AggBreak = 1u << 16, kTxdw2AntA = 1u << 24, kTxdw2AntB = 1u << 25,
+    kTxdw4UseDriverRate = 1u << 8,
+    kTxdw5RetryLimitEnable = 1u << 17, kTxdw5RetryLimitShift = 18,
+    kTxdw7AntC = (1u << 29) >> 16,
 };
 
 IOReturn RTL8188EUProbe::regRead(uint16_t addr, void *out, uint16_t len)
@@ -837,6 +845,45 @@ IOReturn RTL8188EUProbe::setChannel(int channel)
     return kIOReturnSuccess;
 }
 
+
+// Stage 4b: REG_MACID <- efuse MAC (Linux does this in add_interface -> rtl8xxxu_set_mac, port 0, core.c:3558).
+IOReturn RTL8188EUProbe::setMacAddr()
+{
+    IOReturn r;
+    for (int i = 0; i < 6; i++)
+        if ((r = write8(kRegMacid + i, _efuse[kEfuseOffMac + i])) != kIOReturnSuccess) return r;
+    return kIOReturnSuccess;
+}
+
+// Stage 4b: send one management frame (rate 1M, broadcast/multicast per DA) on the MGNT queue.
+// Port of rtl8xxxu_tx (core.c:5456) + rtl8xxxu_fill_txdesc_v3 (core.c:5378) for the mgmt, non-QoS, no-key, no-AMPDU case.
+// With 2 bulk OUT eps (high+normal) MGNT maps to pipe index 0 (init_queue_priority case 2, mgp = 0) => _bulkOut[0].
+// 8188e rate-adaptation / tx-report handling is NOT ported; the TX report (C2H) is ignored.
+IOReturn RTL8188EUProbe::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq)
+{
+    if (!_bulkOut[0]) return kIOReturnNotReady;
+    if (len < 24 || kTxDescSize + len > buf->getLength()) return kIOReturnBadArgument;
+    uint8_t *d = (uint8_t *)buf->getBytesNoCopy();
+    memset(d, 0, kTxDescSize);
+    memcpy(d + kTxDescSize, frame, len);
+    uint32_t dw0 = kTxdw0Own | kTxdw0Fs | kTxdw0Ls;
+    if (frame[4] & 1) dw0 |= kTxdw0Bmc;                          // DA is multicast/broadcast
+    OSWriteLittleInt16(d, 0, len);                               // pkt_size
+    d[2] = kTxDescSize;                                          // pkt_offset
+    d[3] = (uint8_t)dw0;                                         // txdw0
+    OSWriteLittleInt32(d, 4, (uint32_t)kTxQueueMgnt << 8);       // txdw1: queue
+    OSWriteLittleInt32(d, 8, kTxdw2AggBreak | kTxdw2AntA | kTxdw2AntB);
+    OSWriteLittleInt32(d, 12, (uint32_t)(seq & 0xfff) << 16);    // txdw3: TXDESC32_SEQ_SHIFT
+    OSWriteLittleInt32(d, 16, kTxdw4UseDriverRate);              // txdw4
+    OSWriteLittleInt32(d, 20, (6u << kTxdw5RetryLimitShift) | kTxdw5RetryLimitEnable);   // txdw5: rate 0 = DESC_RATE_1M
+    OSWriteLittleInt16(d, 30, kTxdw7AntC);                       // txdw7
+    uint16_t csum = 0;                                           // rtl8xxxu_calc_tx_desc_csum: XOR of 16 le16 words, csum field zero
+    for (int i = 0; i < kTxDescSize / 2; i++) csum ^= OSReadLittleInt16(d, i * 2);
+    OSWriteLittleInt16(d, 28, csum);
+    uint32_t sent = 0;
+    return _bulkOut[0]->io(buf, kTxDescSize + len, sent, 500);
+}
+
 // Stage 4a: passive RX scan. Synchronous bulk IN, 20 MHz channels 1-13, no aggregation (init_aggregation cleared it).
 // rtl8xxxu_rxdesc16 (rtl8xxxu.h:135) is 6 dwords = 24 bytes; bit positions below are derived from that LE bitfield layout:
 //   dw0: pktlen[13:0] crc32[14] icverr[15] drvinfo_sz[19:16] shift[25:24] phy_stats[26]
@@ -850,14 +897,39 @@ IOReturn RTL8188EUProbe::rxScan()
     if (!buf) return kIOReturnNoMemory;
     uint8_t *b = (uint8_t *)buf->getBytesNoCopy();
     struct Ap { uint8_t bssid[6]; char ssid[33]; uint8_t ds; uint8_t seenCh; } aps[kMaxAps];
-    uint32_t nAps = 0, totalFrames = 0;
+    uint32_t nAps = 0, totalFrames = 0, totalProbeResp = 0;
+
+    // Stage 4b: active scan. MAC from efuse into REG_MACID so unicast probe responses pass RCR_ACCEPT_PHYS_MATCH.
+    IOReturn mr = setMacAddr();
+    IOBufferMemoryDescriptor *txBuf = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, kIODirectionOut, 256, 4);
+    const bool active = (mr == kIOReturnSuccess) && txBuf;
+    IOLog(LOGP "rx_scan: set_mac %s (0x%08x), active probe requests %s\n", mr == kIOReturnSuccess ? "OK" : "FAILED", mr, active ? "on" : "off");
+    uint16_t txSeq = 0;
 
     for (int ch = 1; ch <= 13; ch++) {
         IOReturn r = setChannel(ch);
         if (r != kIOReturnSuccess) { IOLog(LOGP "rx_scan: setChannel(%d) failed 0x%08x\n", ch, r); continue; }
         // Drop frames still queued from the previous channel (v0.10.0 showed a ch11 beacon attributed to ch1).
         for (int d = 0; d < 16; d++) { uint32_t g = 0; if (_bulkIn->io(buf, kRxBufLen, g, 20) != kIOReturnSuccess) break; }
-        uint32_t frames = 0, beacons = 0, crcBad = 0, c2h = 0, ioErr = 0, timeouts = 0;
+        uint32_t frames = 0, beacons = 0, crcBad = 0, c2h = 0, ioErr = 0, timeouts = 0, probeResp = 0, txOk = 0, txFail = 0;
+        IOReturn lastTx = kIOReturnSuccess;
+        if (active) {
+            // Probe request, broadcast DA/BSSID, wildcard SSID, 1/2/5.5/11 + 6/9/12/18 (ext: 24/36/48/54), DS channel.
+            uint8_t pr[64]; uint16_t n = 0;
+            pr[n++] = 0x40; pr[n++] = 0x00; pr[n++] = 0; pr[n++] = 0;
+            for (int i = 0; i < 6; i++) pr[n++] = 0xff;
+            for (int i = 0; i < 6; i++) pr[n++] = _efuse[kEfuseOffMac + i];
+            for (int i = 0; i < 6; i++) pr[n++] = 0xff;
+            txSeq++; pr[n++] = (uint8_t)((txSeq << 4) & 0xff); pr[n++] = (uint8_t)((txSeq << 4) >> 8);
+            pr[n++] = 0; pr[n++] = 0;                                                       // SSID, wildcard
+            const uint8_t rates[] = {0x82, 0x84, 0x8b, 0x96, 0x0c, 0x12, 0x18, 0x24};
+            pr[n++] = 1; pr[n++] = sizeof(rates); memcpy(pr + n, rates, sizeof(rates)); n += sizeof(rates);
+            const uint8_t ext[] = {0x30, 0x48, 0x60, 0x6c};
+            pr[n++] = 50; pr[n++] = sizeof(ext); memcpy(pr + n, ext, sizeof(ext)); n += sizeof(ext);
+            pr[n++] = 3; pr[n++] = 1; pr[n++] = (uint8_t)ch;
+            lastTx = txMgmt(txBuf, pr, n, txSeq);
+            if (lastTx == kIOReturnSuccess) txOk++; else txFail++;
+        }
         uint64_t startAbs, nowAbs, ns = 0;
         clock_get_uptime(&startAbs);
         while (ns < (uint64_t)kDwellMs * 1000000ull) {
@@ -877,6 +949,7 @@ IOReturn RTL8188EUProbe::rxScan()
             if (pktLen < 36 || off + pktLen > got) continue;
             const uint8_t *f = b + off;
             if ((f[0] & 0xfc) != 0x80 && (f[0] & 0xfc) != 0x50) continue;   // beacon / probe response only
+            if ((f[0] & 0xfc) == 0x50) probeResp++;
             beacons++;
             const uint8_t *bssid = f + 16;
             char ssid[33] = {0}; uint8_t ds = 0;
@@ -896,12 +969,13 @@ IOReturn RTL8188EUProbe::rxScan()
                       ssid, bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], ds, ch);
             }
         }
-        totalFrames += frames;
-        IOLog(LOGP "rx_scan ch%d: frames=%u mgmt(beacon/probe)=%u crc_bad=%u c2h=%u timeouts=%u io_err=%u\n",
-              ch, frames, beacons, crcBad, c2h, timeouts, ioErr);
+        totalFrames += frames; totalProbeResp += probeResp;
+        IOLog(LOGP "rx_scan ch%d: frames=%u mgmt(beacon/probe)=%u probe_resp=%u crc_bad=%u c2h=%u timeouts=%u io_err=%u tx_ok=%u tx_fail=%u (0x%08x)\n",
+              ch, frames, beacons, probeResp, crcBad, c2h, timeouts, ioErr, txOk, txFail, lastTx);
     }
+    if (txBuf) txBuf->release();
     buf->release();
-    IOLog(LOGP "rx_scan done: %u frames total, %u unique AP(s)\n", totalFrames, nAps);
+    IOLog(LOGP "rx_scan done: %u frames total, %u probe responses, %u unique AP(s)\n", totalFrames, totalProbeResp, nAps);
     return kIOReturnSuccess;
 }
 

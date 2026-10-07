@@ -70,6 +70,9 @@ private:
     IOReturn setTxPower(int channel, bool ht40);
     IOReturn setChannel(int channel);
     IOReturn rxScan();
+    // Stage 4b: REG_MACID from efuse + management-frame TX (txdesc32, MGNT queue).
+    IOReturn setMacAddr();
+    IOReturn txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq);
     IOReturn phyLcCalibrate();
     IOReturn initTail();
 
