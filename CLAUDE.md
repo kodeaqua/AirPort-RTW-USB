@@ -48,8 +48,10 @@ Details: `docs/recon.md`, `docs/decisions.md`, `docs/stage2-probe.md`.
   initQueues: 2 bulk OUT, no low queue; log: `firmware RUNNING (0x00000000): FW_DL=0x000300c6`.
   Next (3c): MAC/BB/RF init (`rtl8xxxu_init_device`, LLT, `request_hw_feature`) - verify against source first.
 - **Stage 3c-1 (init_mac): PASS on hardware (2026-10-07, v0.5.0).** 92 MAC table writes + MAX_AGGR_NUM; log:
-  `init_mac OK (0x00000000): MAX_AGGR_NUM=0x0707 0x428=0x0a 0x652=0x20` (all match expected). Next: 3c-2 RF accessor + `init_phy_bb`
-  (see `docs/stage3c-init.md`).
+  `init_mac OK (0x00000000): MAX_AGGR_NUM=0x0707 0x428=0x0a 0x652=0x20` (all match expected).
+- **Stage 3c-2 (RF accessor + init_phy_bb): PASS on hardware (2026-10-07, v0.6.0).** log: `init_phy_bb OK (0x00000000):
+  0x800=0x80040000 0x804=0x00000003 0x808=0x0000fc00; rf_read(A,0x00)=0x33e73` (RF read works; value informational).
+  Next: 3c-3 `init_phy_rf` (radio A table), see `docs/stage3c-init.md`.
 - Old `RTW88USBDevice.cpp` in the clone is stale/unbuilt; do not build on it.
 
 ## Verified facts (from this session)

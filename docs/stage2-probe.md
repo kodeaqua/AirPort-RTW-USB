@@ -152,3 +152,8 @@ Pass = `init_phy_bb OK` with `firmware RUNNING` and `init_mac OK` still present.
 (the RF read happens before the RF table is written, so its value is not checked; a FAILED read means the HSSI path
 is broken and matters for 3c-3). If FAILED: send the `initPhyRegs:` line (names the register).
 Next (3c-3): `init_phy_rf` (radio A table).
+
+Hardware result (2026-10-07, v0.6.0): PASS. Log:
+`init_phy_bb OK (0x00000000): 0x800=0x80040000 0x804=0x00000003 0x808=0x0000fc00; rf_read(A,0x00) = 0x33e73`
+with `firmware RUNNING` and `init_mac OK` still present. The RF read returned a value (HSSI read path works);
+0x33e73 is informational only since the RF table is not written yet.
