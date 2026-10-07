@@ -130,6 +130,18 @@ enum {
     kTxdw4UseDriverRate = 1u << 8,
     kTxdw5RetryLimitEnable = 1u << 17, kTxdw5RetryLimitShift = 18,
     kTxdw7AntC = (1u << 29) >> 16,
+    // Stage 4c link/key registers: regs.h (Linux source read 2026-10-07)
+    kRegMsr = 0x0102, kMsrLinkMask = 0x3, kMsrLinkNone = 0, kMsrLinkStation = 2,
+    kRegBssid = 0x0618, kRegSlot = 0x051b, kRegBcnMaxErr = 0x055d, kRegBcnPsrRpt = 0x06a8,
+    kResponseRateInit2g = 0x15f,
+    kRsrAckShortPreamble = 1u << 23, kRegInirtsRateSel = 0x0480,
+    kBeaconAtim = 1u << 0, kBeaconFunctionEnable = 1u << 3,
+    kRegCamWrite = 0x0674, kCamCmdWrite = 1u << 16, kCamCmdKeyShift = 3, kCamWriteValid = 1u << 15,
+    kRegSecurityCfg = 0x0680, kCrSecurityEnable = 1u << 9,
+    kSecCfgTxUseDefkey = 1u << 0, kSecCfgRxUseDefkey = 1u << 1, kSecCfgTxSecEnable = 1u << 2,
+    kSecCfgRxSecEnable = 1u << 3, kSecCfgTxbcUseDefkey = 1u << 6, kSecCfgRxbcUseDefkey = 1u << 7,
+    kMaxSecCam = 32,                 // fops->max_sec_cam_num for 8188eu
+    kCipherCcmpLow = 0x4,            // WLAN_CIPHER_SUITE_CCMP 00-0F-AC:4 & 0x0f (cam_write "hack")
 };
 
 IOReturn RTL8188EUProbe::regRead(uint16_t addr, void *out, uint16_t len)
@@ -884,6 +896,177 @@ IOReturn RTL8188EUProbe::txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *fr
     return _bulkOut[0]->io(buf, kTxDescSize + len, sent, 500);
 }
 
+
+// ---- Stage 4c: link-layer register programming, ports of the corresponding rtl8xxxu pieces (core.c line refs). ----
+// None of this is exercised by a hardware test yet; H2C commands (report_connect, update_rate_mask) are NOT ported.
+
+// rtl8xxxu_set_linktype, port 0 (core.c:1589).
+IOReturn RTL8188EUProbe::setLinkType(uint8_t type)
+{
+    uint8_t v; IOReturn r = read8(kRegMsr, &v);
+    if (r != kIOReturnSuccess) return r;
+    return write8(kRegMsr, (uint8_t)((v & 0x0c) | (type & kMsrLinkMask)));
+}
+
+// rtl8xxxu_set_bssid, port 0 (core.c:3581).
+IOReturn RTL8188EUProbe::setBssid(const uint8_t *bssid)
+{
+    IOReturn r;
+    for (int i = 0; i < 6; i++)
+        if ((r = write8(kRegBssid + i, bssid[i])) != kIOReturnSuccess) return r;
+    return kIOReturnSuccess;
+}
+
+// rtl8xxxu_stop_tx_beacon (core.c:1133).
+IOReturn RTL8188EUProbe::stopTxBeacon()
+{
+    uint8_t v; IOReturn r;
+    if ((r = read8(kRegFwhwTxqCtrl + 2, &v)) != kIOReturnSuccess) return r;
+    if ((r = write8(kRegFwhwTxqCtrl + 2, v & ~(1u << 6))) != kIOReturnSuccess) return r;
+    if ((r = write8(kRegTbttProhibit + 1, 0x64)) != kIOReturnSuccess) return r;
+    if ((r = read8(kRegTbttProhibit + 2, &v)) != kIOReturnSuccess) return r;
+    return write8(kRegTbttProhibit + 2, v & ~1u);
+}
+
+// STATION case of rtl8xxxu_add_interface (core.c:6746-6756, 6791-6793): beacon block, link type, MAC.
+IOReturn RTL8188EUProbe::addStationInterface()
+{
+    IOReturn r; uint8_t v;
+    if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
+    if ((r = read8(kRegBeaconCtrl, &v)) != kIOReturnSuccess) return r;
+    if ((r = write8(kRegBeaconCtrl, v | kBeaconAtim | kBeaconFunctionEnable | kBeaconDisableTsfUpdate)) != kIOReturnSuccess) return r;
+    if ((r = setLinkType(kMsrLinkStation)) != kIOReturnSuccess) return r;
+    return setMacAddr();
+}
+
+// rtl8xxxu_set_basic_rates, 2.4 GHz (core.c:4748). rate_cfg is a bitmap in rtl rate order (bit0 = 1M ... bit11 = 54M).
+IOReturn RTL8188EUProbe::setBasicRates(uint32_t rateCfg)
+{
+    uint32_t v; IOReturn r;
+    rateCfg &= kResponseRateBitmapAll;
+    if ((r = read32(kRegResponseRateSet, &v)) != kIOReturnSuccess) return r;
+    v = (v & kResponseRateInit2g) | rateCfg;
+    if ((r = write32(kRegResponseRateSet, v)) != kIOReturnSuccess) return r;
+    uint8_t idx = 0;
+    if (rateCfg) idx = (uint8_t)(31 - __builtin_clz(rateCfg));   // __fls
+    return write8(kRegInirtsRateSel, idx);
+}
+
+// BSS_CHANGED_ERP_PREAMBLE (core.c:4968).
+IOReturn RTL8188EUProbe::setShortPreamble(bool on)
+{
+    uint32_t v; IOReturn r = read32(kRegResponseRateSet, &v);
+    if (r != kIOReturnSuccess) return r;
+    return write32(kRegResponseRateSet, on ? (v | kRsrAckShortPreamble) : (v & ~kRsrAckShortPreamble));
+}
+
+// BSS_CHANGED_ERP_SLOT + rtl8xxxu_set_aifs (core.c:4979, 4801). sifs = 16 if the peer is 11n on 2.4 GHz else 10.
+IOReturn RTL8188EUProbe::setSlot(bool shortSlot, bool peerHt)
+{
+    const uint8_t slot = shortSlot ? 9 : 20, sifs = peerHt ? 16 : 10;
+    IOReturn r = write8(kRegSlot, slot);
+    if (r != kIOReturnSuccess) return r;
+    static const uint16_t regs[4] = {kRegEdcaVo, kRegEdcaVi, kRegEdcaBe, kRegEdcaBk};
+    for (int i = 0; i < 4; i++) {
+        uint32_t v;
+        if ((r = read32(regs[i], &v)) != kIOReturnSuccess) return r;
+        uint8_t aifsn = v & 0xff;
+        if (aifsn < 2 || aifsn > 15) continue;     // not set yet or already converted (same test as Linux)
+        v = (v & ~0xffu) | (uint8_t)(aifsn * slot + sifs);
+        if ((r = write32(regs[i], v)) != kIOReturnSuccess) return r;
+    }
+    return kIOReturnSuccess;
+}
+
+// BSS_CHANGED_ASSOC, "joinbss sequence" without the H2C parts (core.c:4930-4955).
+IOReturn RTL8188EUProbe::joinBss(uint16_t aid)
+{
+    IOReturn r;
+    if ((r = write8(kRegBcnMaxErr, 0xff)) != kIOReturnSuccess) return r;
+    if ((r = stopTxBeacon()) != kIOReturnSuccess) return r;
+    return write16(kRegBcnPsrRpt, 0xc000 | aid);
+}
+
+// BSS_CHANGED_ASSOC, disassociated branch (core.c:4957).
+IOReturn RTL8188EUProbe::leaveBss()
+{
+    uint8_t v; IOReturn r = read8(kRegBeaconCtrl, &v);
+    if (r != kIOReturnSuccess) return r;
+    return write8(kRegBeaconCtrl, v | kBeaconDisableTsfUpdate);
+}
+
+// rtl8xxxu_set_key SET_KEY, CCMP only (core.c:6974-7041) + rtl8xxxu_cam_write (core.c:4454).
+// Returns the CAM index used in *hwIdx. key16 is the 128-bit TK. Pairwise: mac = peer address; group: mac = BSSID.
+IOReturn RTL8188EUProbe::setKeyCcmp(uint8_t keyidx, bool pairwise, const uint8_t *mac, const uint8_t *key16, uint8_t *hwIdx)
+{
+    if (keyidx > 3) return kIOReturnUnsupported;
+    IOReturn r; uint16_t cr; uint8_t i0 = 0xff;
+    for (uint8_t i = 0; i < kMaxSecCam; i++) if (!(_camMap & (1u << i))) { i0 = i; break; }
+    if (i0 == 0xff) return kIOReturnNoResources;
+
+    if ((r = read16(kRegCr, &cr)) != kIOReturnSuccess) return r;
+    if ((r = write16(kRegCr, cr | kCrSecurityEnable)) != kIOReturnSuccess) return r;
+    const uint8_t sec = kSecCfgTxSecEnable | kSecCfgTxbcUseDefkey | kSecCfgRxSecEnable | kSecCfgRxbcUseDefkey |
+                        kSecCfgTxUseDefkey | kSecCfgRxUseDefkey;
+    if ((r = write8(kRegSecurityCfg, sec)) != kIOReturnSuccess) return r;
+
+    const uint32_t addr = (uint32_t)i0 << kCamCmdKeyShift;
+    uint32_t ctrl = (kCipherCcmpLow & 0x0f) << 2 | keyidx | kCamWriteValid;
+    if (!pairwise) ctrl |= 1u << 6;
+    for (int j = 5; j >= 0; j--) {      // same order as Linux: entry 5 down to 0, 100 us between
+        uint32_t v;
+        if (j == 0) v = ctrl | ((uint32_t)mac[0] << 16) | ((uint32_t)mac[1] << 24);
+        else if (j == 1) v = mac[2] | (mac[3] << 8) | ((uint32_t)mac[4] << 16) | ((uint32_t)mac[5] << 24);
+        else { int i = (j - 2) << 2; v = key16[i] | (key16[i+1] << 8) | ((uint32_t)key16[i+2] << 16) | ((uint32_t)key16[i+3] << 24); }
+        if ((r = write32(kRegCamWrite, v)) != kIOReturnSuccess) return r;
+        if ((r = write32(kRegCamCmd, kCamCmdPolling | kCamCmdWrite | (addr + j))) != kIOReturnSuccess) return r;
+        IODelay(100);
+    }
+    _camMap |= 1u << i0;
+    *hwIdx = i0;
+    return kIOReturnSuccess;
+}
+
+// rtl8xxxu_set_key DISABLE_KEY (core.c:7043).
+IOReturn RTL8188EUProbe::clearKey(uint8_t hwIdx)
+{
+    if (hwIdx >= kMaxSecCam) return kIOReturnBadArgument;
+    IOReturn r = write32(kRegCamWrite, 0);
+    if (r != kIOReturnSuccess) return r;
+    r = write32(kRegCamCmd, kCamCmdPolling | kCamCmdWrite | ((uint32_t)hwIdx << kCamCmdKeyShift));
+    if (r == kIOReturnSuccess) _camMap &= ~(1u << hwIdx);
+    return r;
+}
+
+
+// Stage 4c selftest: write the link/key registers and read them back. Uses made-up BSSID/key values (locally administered
+// 02:... address, all-zero-ish key) and restores link type NONE afterwards. Only proves the registers accept writes.
+void RTL8188EUProbe::linkSelfTest()
+{
+    const uint8_t testBssid[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x55};
+    const uint8_t testKey[16] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f};
+    IOReturn ra = addStationInterface(), rb = setBssid(testBssid), rc = setBasicRates(0x15), rd = setShortPreamble(true);
+    IOReturn re = setSlot(true, true), rf = joinBss(1);
+    uint8_t msr = 0, bss[6] = {}, mac[6] = {}, slot = 0, inirts = 0; uint32_t rsr = 0, bpsr = 0, be = 0; uint16_t cr = 0;
+    read8(kRegMsr, &msr); read8(kRegSlot, &slot); read8(kRegInirtsRateSel, &inirts);
+    for (int i = 0; i < 6; i++) { read8(kRegBssid + i, &bss[i]); read8(kRegMacid + i, &mac[i]); }
+    read32(kRegResponseRateSet, &rsr); read32(kRegBcnPsrRpt - 0, &bpsr); read32(kRegEdcaBe, &be);
+    IOLog(LOGP "link_selftest: add_if=0x%x bssid=0x%x rates=0x%x preamble=0x%x slot=0x%x join=0x%x\n", ra, rb, rc, rd, re, rf);
+    IOLog(LOGP "link_selftest: MSR=0x%02x (expect 0x02) MACID=%02x:%02x:%02x:%02x:%02x:%02x (efuse) BSSID=%02x:%02x:%02x:%02x:%02x:%02x (expect 02:11:22:33:44:55) "
+          "RRSR=0x%08x (expect bit23 set, low bits 0x15f|0x15) INIRTS=%u (expect 4) SLOT=%u (expect 9) BCN_PSR_RPT lo16=0x%04x (expect 0xc001) EDCA_BE=0x%08x\n",
+          msr, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], bss[0], bss[1], bss[2], bss[3], bss[4], bss[5], rsr, inirts, slot, bpsr & 0xffff, be);
+    uint8_t hw = 0xff, hw2 = 0xff; uint32_t camCmd = 0xffffffff, camCmd2 = 0xffffffff;
+    IOReturn rk = setKeyCcmp(0, true, testBssid, testKey, &hw);
+    read32(kRegCamCmd, &camCmd); read16(kRegCr, &cr);
+    uint8_t sec = 0; read8(kRegSecurityCfg, &sec);
+    IOReturn rk2 = setKeyCcmp(1, false, testBssid, testKey, &hw2);
+    IOReturn rc1 = clearKey(hw), rc2 = clearKey(hw2);
+    read32(kRegCamCmd, &camCmd2);
+    IOLog(LOGP "link_selftest: set_key=0x%x (cam %u) set_key2=0x%x (cam %u) clear=0x%x/0x%x CAM_CMD after write=0x%08x after clear=0x%08x (bit31 should be 0) "
+          "CR=0x%04x (bit9 security) SECCFG=0x%02x (expect 0xcf)\n", rk, hw, rk2, hw2, rc1, rc2, camCmd, camCmd2, cr, sec);
+    leaveBss(); setLinkType(kMsrLinkNone);
+}
+
 // Stage 4a: passive RX scan. Synchronous bulk IN, 20 MHz channels 1-13, no aggregation (init_aggregation cleared it).
 // rtl8xxxu_rxdesc16 (rtl8xxxu.h:135) is 6 dwords = 24 bytes; bit positions below are derived from that LE bitfield layout:
 //   dw0: pktlen[13:0] crc32[14] icverr[15] drvinfo_sz[19:16] shift[25:24] phy_stats[26]
@@ -1157,6 +1340,7 @@ bool RTL8188EUProbe::start(IOService *provider)
                                                 IOLog(LOGP "rx_scan start: RCR=0x%08x CR=0x%08x\n", rc, cr3);
                                                 IOReturn xr = rxScan();
                                                 IOLog(LOGP "rx_scan returned 0x%08x\n", xr);
+                                                linkSelfTest();
                                             }
                                         }
                                     }

@@ -72,6 +72,19 @@ private:
     IOReturn rxScan();
     // Stage 4b: REG_MACID from efuse + management-frame TX (txdesc32, MGNT queue).
     IOReturn setMacAddr();
+    // Stage 4c: link-layer registers (see RTL8188EUProbe.cpp). Untested on hardware; no H2C yet.
+    IOReturn setLinkType(uint8_t type);
+    IOReturn setBssid(const uint8_t *bssid);
+    IOReturn stopTxBeacon();
+    IOReturn addStationInterface();
+    IOReturn setBasicRates(uint32_t rateCfg);
+    IOReturn setShortPreamble(bool on);
+    IOReturn setSlot(bool shortSlot, bool peerHt);
+    IOReturn joinBss(uint16_t aid);
+    IOReturn leaveBss();
+    IOReturn setKeyCcmp(uint8_t keyidx, bool pairwise, const uint8_t *mac, const uint8_t *key16, uint8_t *hwIdx);
+    IOReturn clearKey(uint8_t hwIdx);
+    void     linkSelfTest();
     IOReturn txMgmt(IOBufferMemoryDescriptor *buf, const uint8_t *frame, uint16_t len, uint16_t seq);
     IOReturn phyLcCalibrate();
     IOReturn initTail();
@@ -89,5 +102,6 @@ private:
     IOBufferMemoryDescriptor *_ctlBuf = nullptr;
     IOBufferMemoryDescriptor *_blkBuf = nullptr;   // 196 bytes, writeN chunk
     bool                      _open   = false;
+    uint32_t                  _camMap = 0;   // used security CAM entries
     uint8_t                   _efuse[512];   // EFUSE_MAP_LEN, logical map, 0xff = unprogrammed
 };

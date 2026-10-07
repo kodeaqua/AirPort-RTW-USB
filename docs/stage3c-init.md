@@ -112,3 +112,13 @@ Source: Linux rtl8xxxu `core.c` fill_txdesc_v3 (:5378), rtl8xxxu_tx (:5456), cal
 - Pass: `set_mac OK`, `tx_ok=1` per channel, and `probe_resp>0` on the channel(s) where "Rumah 4G" (ch11) lives. That proves TX descriptor + queue + antenna + RF TX path.
   `tx_ok=1` but probe_resp=0 everywhere: USB write works but chip did not transmit (descriptor/queue/txpower/MAC address suspect). `tx_fail`: USB pipe problem.
 - Risk note: first transmission from this device. Probe requests are standard broadcast management frames; no association is attempted.
+
+## 4c: link-layer registers and CCMP CAM (v0.12.0, written 2026-10-07, awaiting hardware test)
+Ports from Linux rtl8xxxu `core.c` (read 2026-10-07): set_linktype :1589, set_bssid :3581, stop_tx_beacon :1133, add_interface(STATION) :6746,
+set_basic_rates :4748, bss_info_changed ASSOC/PREAMBLE/SLOT/BSSID :4883, set_aifs :4801, set_key :6974, cam_write :4454.
+- New probe methods: setLinkType, setBssid, stopTxBeacon, addStationInterface, setBasicRates, setShortPreamble, setSlot, joinBss, leaveBss, setKeyCcmp, clearKey.
+- NOT ported (needs H2C firmware commands, next step): report_connect (media status / role), update_rate_mask, RSSI report. Without them a real association
+  will not get rate control; mgmt frames at 1M still work.
+- `linkSelfTest()` runs after rx_scan: writes the registers with made-up BSSID/key and reads back. Expected log lines start with `link_selftest:`;
+  expected values are printed in the line (MSR 0x02, BSSID 02:11:22:33:44:55, INIRTS 4, SLOT 9, BCN_PSR_RPT 0xc001, SECCFG 0xcf, CAM_CMD bit31 clear after clear).
+  The selftest does not verify the key contents in CAM (no read-back path ported); that is proven only by a real WPA2 handshake.
