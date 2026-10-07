@@ -72,3 +72,11 @@ Ported from `build/src/core.c` (init_device 3958+), `8188e.c`, `8188f.c`; all co
 - Possible explanation for the 3c-3 mismatch at RF reg 0x18 (0x0f407 written, 0x07407 read): bit 15 is the LC
   calibration start bit, which hardware clears when done. Guess; the 3c-5 log (RF18 after LC cal) will tell.
 
+
+## 3c-4 + 3c-5 hardware result (v0.8.0, 2026-10-07)
+- `init_wmac OK`: CR=0x06ff, RCR, RX_DRVINFO, TRXFF_BNDY, SIFS_CCK, EDCA_BE all as expected.
+- `init_tail OK`: NAV_UPPER=0xeb, RF18=0x07407 (bit 15 clear, so the LC-cal start bit self-clears: explains the 3c-3 RF18 mismatch),
+  tx power ch1 cck=0x27 ofdm=0x2b from efuse.
+- **RFSW mismatch (0x03000760 vs 0x07000760) = real bug in our port**, fixed in v0.8.1: Linux (core.c:4058-4061) also ORs
+  `FPGA0_RF_PAPE << FPGA0_RF_BD_CTRL_SHIFT` (bit 26); we only set the unshifted PAPE.
+- **HWSEQ_CTRL (0x423) wrote 0xff, read 0x7f: unexplained.** Same as Linux write; guess: bit 7 not readable/hardware-owned. Not a blocker.

@@ -680,7 +680,7 @@ IOReturn RTL8188EUProbe::initWmac()
     // RFSW control (no_pape is never set for 8188EU, so PAPE is included).
     v32 = kFpga0RfTrsw | kFpga0RfTrswb | kFpga0RfAntsw | kFpga0RfAntswb |
           ((kFpga0RfAntsw | kFpga0RfAntswb) << kFpga0RfBdCtrlShift) |
-          kFpga0RfPape;
+          kFpga0RfPape | (kFpga0RfPape << kFpga0RfBdCtrlShift);
     TRY(write32(kRegFpgaXaRfSwCtrl, v32));
 
     // TX buffer boundary
