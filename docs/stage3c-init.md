@@ -45,3 +45,14 @@ Remaining, in source order:
 - **3c-5:** efuse tx power parse + `set_tx_power` + LC/IQ calibration.
 
 Register values in every sub-step must be copied from source; mark any deviation as a guess in comments.
+
+## 3c-3 result (2026-10-07, v0.7.1)
+- `init_phy_rf` ran on hardware with no USB errors. Diagnostic readback (not in Linux): 49 regs checked, 36 match,
+  13 mismatch (0x2f, 0x42, 0x83, 0xc4, 0xc6, 0xca, 0x51, 0x56, 0xb6, 0x19, 0x18, 0x1e, 0x1f).
+- Checked against source: generated `rtl8188eu_radioa_init_table` is identical to 8188e.c (96 entries); `rfRead`/`rfWrite`
+  match `rtl8xxxu_read_rfreg`/`write_rfreg` step by step. So the mismatch is not a copy error.
+- Reg 0x2f read 0x14140 (v0.7.0) vs 0x101c0 (v0.7.1) for the same written value, so at least that register is not
+  stable on readback. Cause unknown (guess: status/calibration bits, or readback not meaningful for these regs).
+- Verdict: **ran OK, readback criterion not met, unexplained.** Not treated as a blocker; real proof is RF function
+  (beacon RX during scan). Revisit if RX shows nothing.
+
