@@ -1,4 +1,4 @@
-# usbwifi-native-bringup
+# AirPort-RTW-USB
 
 **Release 1.0.0** (2026-10-08): see [CHANGELOG.md](CHANGELOG.md) for what is verified and the known auto-join limitation.
 
@@ -66,8 +66,8 @@ Repository layout:
 Full details: [docs/BUILD.md](docs/BUILD.md) and [docs/INSTALL.md](docs/INSTALL.md).
 
 ```sh
-git clone https://github.com/kodeaqua/usbwifi-native-bringup.git
-cd usbwifi-native-bringup
+git clone https://github.com/kodeaqua/AirPort-RTW-USB.git
+cd AirPort-RTW-USB
 git clone https://github.com/JoMei9019-real/AirPort-RTW.git AirPort-RTW
 (cd AirPort-RTW && ./scripts/bootstrap-deps.sh)
 make airport-usb          # -> AirPort-RTW/build/out/AirPortRTW.kext

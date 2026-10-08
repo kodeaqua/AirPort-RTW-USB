@@ -6,8 +6,8 @@ The kext targets `x86_64`, minimum macOS 13.0 (`-mmacosx-version-min=13.0`).
 ## 1. Get the sources
 
 ```sh
-git clone https://github.com/kodeaqua/usbwifi-native-bringup.git
-cd usbwifi-native-bringup
+git clone https://github.com/kodeaqua/AirPort-RTW-USB.git
+cd AirPort-RTW-USB
 git clone https://github.com/JoMei9019-real/AirPort-RTW.git AirPort-RTW      # gitignored: our changes live in patches/
 cd AirPort-RTW && ./scripts/bootstrap-deps.sh && cd ..                         # MacKernelSDK, rtw88-stable, PCIe firmware
 ```
